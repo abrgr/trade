@@ -1,0 +1,9 @@
+version: "2"
+services:
+  lein:
+    image: clojure:lein-2.8.3-alpine
+    volumes:
+      - ".:/usr/src/app"
+      - "./.m2:/root/.m2"
+    entrypoint: ["lein"]
+    working_dir: "/usr/src/app"
