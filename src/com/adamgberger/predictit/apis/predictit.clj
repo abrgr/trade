@@ -64,21 +64,12 @@
 (defn json-req []
     {"Accept" "application/json, text/plain, */*"})
 
-(defn read-json [str value-fns]
-    (json/read-str str
-                   :key-fn keyword
-                   :value-fn (fn [k v]
-                                (let [f (k value-fns)]
-                                    (if (some? f)
-                                        (f v)
-                                        v)))))
-
 (defn resp-from-json
     ([resp] (resp-from-json {}))
     ([resp value-fns]
         (-> resp
            :body
-           (read-json value-fns))))
+           (utils/read-json value-fns))))
 
 (defn parse-localish-datetime [s]
     (if (= s "N/A")
@@ -118,7 +109,7 @@
                               (utils/split-first ":")
                               second
                               .trim
-                              (read-json value-fns))]
+                              (utils/read-json value-fns))]
                 (cond
                     (= evt "keep-alive")
                         nil
@@ -259,7 +250,7 @@
             params {:headers headers
                     :form-params {:quantity quantity
                                   :pricePerShare price
-                                  :contractId: contract-id
+                                  :contractId contract-id
                                   :tradeType (trade-type numeric-trade-types)}}
             resp (http-post (predictit-api-url "/Trade/SubmitTrade") params)]
             (when-not (-> resp :body some?)
