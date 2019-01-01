@@ -4,6 +4,8 @@
             [com.adamgberger.predictit.lib.utils :as utils])
   (:gen-class))
 
+(def id ::id)
+
 (defn get-raw []
     (let [browser-url "https://projects.fivethirtyeight.com/trump-approval-ratings/"
           json-url "https://projects.fivethirtyeight.com/trump-approval-ratings/approval.json"

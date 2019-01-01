@@ -4,7 +4,8 @@
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.venues :as vs]
             [com.adamgberger.predictit.venues.venue :as v]
-            [com.adamgberger.predictit.strategies :as strats])
+            [com.adamgberger.predictit.strategies :as strats]
+            [com.adamgberger.predictit.inputs :as inputs])
   (:gen-class))
 
 (defn get-available-markets-chan [venue]
@@ -12,20 +13,18 @@
 
 (defn maintain-venue-state [key interval-ms updater state end-chan]
   ; we kick off a go-routine that updates each venue's state
-  ; at key with the result of (apply updater prev-state venue)
+  ; at key with the result of (updater venue)
   ; every interval-ms and only stops when end-chan is closed
 
   (l/log :info "Starting venue maintenance" {:key key})
 
-  ; TODO: This updates each venue serially.  Should fix.
   (let [{:keys [venues venue-state]} state
-        upd (fn [venue-state venue]
-              (let [id (v/id venue)
-                    val (updater venue-state venue)
-                    next-state (assoc-in venue-state [id key] val)]
-                next-state))
+        upd (fn [venue-state id val]
+              (assoc-in venue-state [id key] val))
         handler #(doseq [venue venues]
-                  (send-off venue-state upd venue))]
+                    (let [val (updater venue)
+                          id (v/id venue)]
+                      (send-off venue-state upd id val)))]
     (utils/repeatedly-until-closed
       handler
       600000
@@ -36,7 +35,7 @@
   ; we kick off a go-routine that polls all available markets in each venue
   ; and updates venue-state with the results.
 
-  (letfn [(get-mkts [venue-state venue]
+  (letfn [(get-mkts [venue]
             (let [mkts (v/available-markets venue)]
               (l/log :info "Found markets for venue" {:venue-id (v/id venue)
                                                       :market-count (count mkts)})
@@ -54,7 +53,7 @@
   ; we kick off a go-routine that polls balance in each venue
   ; and updates venue-state with the results.
 
-  (letfn [(get-bal [venue-state venue]
+  (letfn [(get-bal [venue]
             (let [bal (v/current-available-balance venue)]
               (l/log :info "Found balance for venue" {:venue-id (v/id venue)
                                                       :balance bal})
@@ -65,7 +64,7 @@
   ; we kick off a go-routine that polls balance in each venue
   ; and updates venue-state with the results.
 
-  (letfn [(get-pos [venue-state venue]
+  (letfn [(get-pos [venue]
             (let [pos (v/positions venue)]
               (l/log :info "Found positions for venue" {:venue-id (v/id venue)
                                                         :pos pos})
@@ -103,6 +102,7 @@
     (maintain-markets state end-chan)
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
+    (inputs/start-all state end-chan)
     (state-watchdog state end-chan)
     (async/<!! end-chan)))
 

@@ -112,9 +112,10 @@
 (defn repeatedly-until-closed [f interval-ms done end-chan]
   (async/go-loop []
     (f)
-    (let [keep-going? (async/alt!
+    (let [interval (if (number? interval-ms) interval-ms (interval-ms))
+          keep-going? (async/alt!
                         end-chan false
-                        (async/timeout interval-ms) true)]
+                        (async/timeout interval) true)]
       (if keep-going?
         (recur)
         (done)))))

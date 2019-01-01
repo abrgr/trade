@@ -4,6 +4,8 @@
             [com.adamgberger.predictit.lib.utils :as utils])
   (:gen-class))
 
+(def id ::id)
+
 (defn remove_js
     "They return something like return_json({...the stuff we want})"
     [s]

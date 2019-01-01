@@ -24,8 +24,10 @@
 
 (defmacro with-log [level msg & body]
     `(try
-        (let [data# (do ~@body)]
-            (log ~level ~msg {:data data#})
+        (let [start# (java.time.Instant/now)
+              data# (do ~@body)]
+            (log ~level ~msg {:data data#
+                              :elapsed-ms (.until start# (java.time.Instant/now) java.time.temporal.ChronoUnit/MILLIS)})
             data#)
         (catch Exception ex#
             (log

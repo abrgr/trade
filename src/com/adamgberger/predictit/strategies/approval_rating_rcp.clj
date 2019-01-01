@@ -13,7 +13,10 @@
 
 (defn maintain-relevant-mkts [state strat-state end-chan]
   (l/log :info "Starting relevant market maintenance for RCP")
-  (let [rel-chan (async/chan)]
+  (let [rel-chan (async/chan)
+        fwd-if-present (fn [_ _ _ new-val]
+                        (let [mkts (get-in new-val [:com.adamgberger.predictit.venues.predictit/predictit :mkts])]
+                            (when (some? mkts) (async/>!! rel-chan mkts))))]
     ; kick off a go routine to filter markets down to relevant markets
     ; and update the strategy with the results
     (async/go-loop []
@@ -28,10 +31,7 @@
     (add-watch
         (:venue-state state)
         ::rel-mkts
-        #(->> %4
-              :com.adamgberger.predictit.venues.predictit/predictit
-              :mkts
-              (async/>!! rel-chan)))))
+        fwd-if-present)))
 
 (defn run [state end-chan]
     (let [strat-state (agent {})]
