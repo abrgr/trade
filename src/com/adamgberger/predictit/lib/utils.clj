@@ -1,5 +1,7 @@
 (ns com.adamgberger.predictit.lib.utils
-  (:require [clojure.data.json :as json])
+  (:require [clojure.core.async :as async]
+            [clojure.data.json :as json]
+            [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
 
 (declare merge-deep)
@@ -46,6 +48,37 @@
       (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/RFC_1123_DATE_TIME))
       (.toInstant)))
 
+(defn parse-localish-datetime
+  "E.x. 11/22/1986 12:30 AM (ET)"
+  [s]
+  (if (= s "N/A")
+      nil
+      (try
+          (let [formatter (java.time.format.DateTimeFormatter/ofPattern "MM/dd/yyyy hh:mm a (z)")
+              zoned (java.time.ZonedDateTime/parse s formatter)]
+              (.toInstant zoned))
+          (catch java.time.format.DateTimeParseException e
+              (l/log :warn "Un-parsable localish datetime" {:input-string s})
+              nil))))
+
+(defn parse-offset-datetime
+  "E.x. 2011-12-03T10:15:30+01:00"
+  [s]
+  (try
+      (-> s
+          (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
+          .toInstant)
+      (catch java.time.format.DateTimeParseException e
+          (l/log :warn "Un-parsable offset datetime" {:input-string s}))))
+
+(defn parse-isoish-datetime
+  "E.x. 2018-12-03T11:30:20.00"
+  [s]
+  (try
+      (java.time.Instant/parse (if (.endsWith s "Z") s (str s "Z")))
+      (catch java.time.format.DateTimeParseException e
+          (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
+
 (defn truncated-to-day
   [d]
   (.truncatedTo d java.time.temporal.ChronoUnit/DAYS))
@@ -75,3 +108,13 @@
   (->> m
       (map (fn [[k v]] [v k]))
       (into {})))
+
+(defn repeatedly-until-closed [f interval-ms done end-chan]
+  (async/go-loop []
+    (f)
+    (let [keep-going? (async/alt!
+                        end-chan false
+                        (async/timeout interval-ms) true)]
+      (if keep-going?
+        (recur)
+        (done)))))

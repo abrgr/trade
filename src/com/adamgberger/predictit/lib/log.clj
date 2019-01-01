@@ -1,10 +1,13 @@
 (ns com.adamgberger.predictit.lib.log
   (:gen-class))
 
-(defn log [level msg extra]
-    (let [ts (-> (java.time.Instant/now) str)
-          msg (merge {:level level :msg msg} extra {:ts ts})]
-        (println msg)))
+(defn log 
+    ([level msg]
+        (log level msg {}))
+    ([level msg extra]
+        (let [ts (-> (java.time.Instant/now) str)
+            msg (merge {:level level :msg msg} extra {:ts ts})]
+            (println msg))))
 
 (defn ex-log-msg [ex]
     {:stack (clojure.string/join "  <-  " (.getStackTrace ex))

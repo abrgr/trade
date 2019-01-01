@@ -65,36 +65,11 @@
     {"Accept" "application/json, text/plain, */*"})
 
 (defn resp-from-json
-    ([resp] (resp-from-json {}))
+    ([resp] (resp-from-json resp {}))
     ([resp value-fns]
         (-> resp
            :body
            (utils/read-json value-fns))))
-
-(defn parse-localish-datetime [s]
-    (if (= s "N/A")
-        nil
-        (try
-            (let [formatter (java.time.format.DateTimeFormatter/ofPattern "MM/dd/yyyy hh:mm a (z)")
-                zoned (java.time.ZonedDateTime/parse s formatter)]
-                (.toInstant zoned))
-            (catch java.time.format.DateTimeParseException e
-                (l/log :warn "Un-parsable localish datetime" {:input-string s})
-                nil))))
-
-(defn parse-offset-datetime [s]
-    (try
-        (-> s
-            (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
-            .toInstant)
-        (catch java.time.format.DateTimeParseException e
-            (l/log :warn "Un-parsable offset datetime" {:input-string s}))))
-
-(defn parse-isoish-datetime [s]
-    (try
-        (java.time.Instant/parse (if (.endsWith s "Z") s (str s "Z")))
-        (catch java.time.format.DateTimeParseException e
-            (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
 
 (defn each-line [is f value-fns]
     (let [rdr (io/reader is)]
@@ -145,8 +120,8 @@
                         :grant_type "password"
                         :rememberMe false}}
             resp (http-post (predictit-api-url "/Account/token") params)
-            value-fns {:.issued parse-offset-datetime
-                       :.expires parse-offset-datetime}]
+            value-fns {:.issued utils/parse-offset-datetime
+                       :.expires utils/parse-offset-datetime}]
             (when-not (-> resp :body some?)
                 (throw (ex-info "Bad auth response" {:resp resp})))
             {:auth (resp-from-json resp)})))
@@ -163,7 +138,9 @@
         (let [headers (->> (from-page (predictit-site-url "/dashboard"))
                            (merge (json-req))
                            (merge (with-auth auth)))
-            resp (http-get (predictit-api-url "/User/Wallet/Balance") {:headers headers})]
+            resp (http-get (predictit-api-url "/User/Wallet/Balance") {:headers headers})
+            value-fns {:portfolioBalanceDecimal utils/to-decimal
+                       :accountBalanceDecimal utils/to-decimal}]
             (when-not (-> resp :body some?)
                 (throw (ex-info "Bad wallet response" {:resp resp})))
             {:balance (resp-from-json resp)})))
@@ -201,8 +178,8 @@
         (let [headers (->> (from-page (predictit-site-url "/markets"))
                            (merge (json-req))
                            (merge (with-auth auth)))
-              value-fns {:endDate parse-localish-datetime
-                         :startDate parse-isoish-datetime}]
+              value-fns {:endDate utils/parse-localish-datetime
+                         :startDate utils/parse-isoish-datetime}]
             (loop [page 1
                    markets []]
                 (Thread/sleep (+ 200 (rand-int 200))) ; just to play nice...
@@ -301,3 +278,42 @@
                 (if (= :recur should-repeat)
                     (recur (http-get url {:headers headers :as :stream}))
                     nil)))))
+
+(defn get-positions
+    "Retrieves current holdings.
+     Returns something like this:
+     {:portfolio [{:isActive true
+                   :isOpen true <- indicates available for trading
+                   :marketId 5130
+                   :marketType 3 <- 3 = multiple contracts; 0 = single contract
+                   :marketName \"What will Trump's ...\"
+                   :userInvestment: 10 <- in dollars
+                   :userMaxPayout 46 <- in dollars
+                   :marketContracts [{:contractId 13733
+                                      :contractIsActive true
+                                      :contractIsOpen true
+                                      :contractName \"42.6% - 42.9%\"
+                                      :userPrediction 1 <- according to numeric-trade-types
+                                      :userQuantity 50
+                                      :userAveragePricePerShare 0.2
+                                      :userOpenOrdersBuyQuantity 0
+                                      :userOpenOrdersSellQuantity 0}]}]}"
+    [auth]
+    (l/with-log :debug "Get positions"
+        (let [headers (->> (from-page (predictit-site-url "/markets"))
+                        (merge (json-req))
+                        (merge (with-auth auth)))
+            value-fns {:userInvestment utils/to-decimal
+                        :userMaxPayout utils/to-decimal
+                        :userAveragePricePerShare utils/to-decimal}
+            qs (str "?sort=traded&sortParameter=ALL")
+            url (predictit-api-url (str "/Profile/Shares" qs))
+            resp (http-get url {:headers headers})]
+            (when-not (-> resp :body some?)
+                (throw (ex-info "Bad portfolio response" {:resp resp})))
+            (let [{suspended? :isTradingSuspended
+                suspension-msg :isTradingSuspendedMessage
+                mkts :markets} (resp-from-json resp value-fns)]
+                (when suspended?
+                    (throw (ex-info "TRADING SUSPENDED" {:suspension-msg suspension-msg})))
+                {:positions mkts}))))
