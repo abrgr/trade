@@ -1,5 +1,12 @@
 (ns com.adamgberger.predictit.lib.log
+  (:require [clojure.core.async :as async])
   (:gen-class))
+
+(def log-chan (async/chan 100))
+
+(async/go-loop []
+    (println (async/<! log-chan))
+    (recur))
 
 (defn log 
     ([level msg]
@@ -7,7 +14,7 @@
     ([level msg extra]
         (let [ts (-> (java.time.Instant/now) str)
             msg (merge {:level level :msg msg} extra {:ts ts})]
-            (println msg))))
+            (async/>!! log-chan msg))))
 
 (defn ex-log-msg [ex]
     {:stack (clojure.string/join "  <-  " (.getStackTrace ex))

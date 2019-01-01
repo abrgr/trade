@@ -153,7 +153,9 @@
          :userHasOwnership false
          :marketImageUrl \"https://az620379.vo.msecnd.net/images/Markets/50fede7c-7b46-4fe3-b431-911baecd6f00.jpg\"
          :totalSharesTraded 19246761
+         :totalTrades 245211
          :status \"Open\"
+         :marketName \"GOP Senate seats after midterms?\"
          :marketId 2891
          :marketUrl \"How-many-Senate-seats-will-the-GOP-hold-after-2018-midterms\"
          :contracts [{:bestNoPrice 0.26

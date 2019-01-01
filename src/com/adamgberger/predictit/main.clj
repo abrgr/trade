@@ -21,8 +21,9 @@
   (let [{:keys [venues venue-state]} state
         upd (fn [venue-state venue]
               (let [id (v/id venue)
-                    val (updater venue-state venue)]
-                (assoc-in venue-state [id key] val)))
+                    val (updater venue-state venue)
+                    next-state (assoc-in venue-state [id key] val)]
+                next-state))
         handler #(doseq [venue venues]
                   (send-off venue-state upd venue))]
     (utils/repeatedly-until-closed
@@ -43,7 +44,11 @@
     (maintain-venue-state :mkts 600000 get-mkts state end-chan)))
 
 (defn start-strategies [state end-chan]
-  (map #(% state) (strats/all)))
+  (reduce
+    (fn [strats next]
+      (merge strats (next state end-chan)))
+    {}
+    (strats/all)))
 
 (defn maintain-balances [state end-chan]
   ; we kick off a go-routine that polls balance in each venue
@@ -70,7 +75,11 @@
 (defn deref-map [m]
   (->> m
        (map (fn [[k v]]
-          [k (if (= (type v) clojure.lang.Agent) @v v)]))
+          [k
+           (cond
+            (= (type v) clojure.lang.Agent) @v
+            (map? v) (deref-map v)
+            :else v)]))
        (into {})))
 
 (defn state-watchdog [state end-chan]
@@ -88,9 +97,9 @@
 (defn run-trading [creds end-chan]
   (let [state {:venues (map #(% creds) (vs/venue-makers))
                :venue-state (agent {})
-               :strats (agent {})
-               :inputs (agent {})}]
-    (start-strategies state end-chan)
+               :strats {}
+               :inputs (agent {})}
+        state (assoc-in state [:strats] (start-strategies state end-chan))]
     (maintain-markets state end-chan)
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)

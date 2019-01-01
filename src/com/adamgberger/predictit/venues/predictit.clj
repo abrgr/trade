@@ -23,13 +23,20 @@
                              :max-val (:maxShareValue c)})
           adapt-mkt (fn [m]
                         {:market-id (:marketId m)
-                         :status (:status m)
-                         :contracts (map adapt-contract (:contracts m))})
+                         :market-name (:marketName m)
+                         :market-url (str "https://www.predictit.org/markets/detail/" (:marketId m) "/" (:marketUrl m))
+                         :total-trades (:totalTrades m)
+                         :total-shares-traded (:totalSharesTraded m)
+                         :status (if (= (:status m) "Open") :open :closed)
+                         :contracts (->> m
+                                         :contracts
+                                         (map adapt-contract)
+                                         (into []))})
           mkts (api/get-markets (:auth venue))]
         (->> mkts
              :markets
              (map adapt-mkt)
-             (filter (comp #{"Open"} :status)))))
+             (into []))))
 
 (def side-by-trade-type
     (utils/rev-assoc api/numeric-trade-types))
@@ -41,7 +48,7 @@
                             {:contract-id (:contractId c)
                              :side (-> c
                                        :userPrediction
-                                       :side-by-trade-type
+                                       side-by-trade-type
                                        name
                                        (.contains "yes")
                                        (if :yes :no))
@@ -51,10 +58,14 @@
                                  :sell (:userOpenOrdersSellQuantity c)}})
           adapt-pos (fn [mkt]
                         {:market-id (:marketId mkt)
-                         :contracts (map adapt-contract (:marketContracts mkt))})]
+                         :contracts (->> mkt
+                                         :marketContracts
+                                         (map adapt-contract)
+                                         (into []))})]
         (->> portfolio
              :positions
-             (map adapt-pos))))
+             (map adapt-pos)
+             (into []))))
 
 (defn make-venue
     "Creates a venue"

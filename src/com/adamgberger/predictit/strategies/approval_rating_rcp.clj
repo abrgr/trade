@@ -4,28 +4,36 @@
   (:gen-class))
 
 (defn is-relevant-mkt [mkt]
-    true)
+    (let [n (-> mkt :market-name .toLowerCase)
+          is-open (= (:status mkt) :open)
+          is-trump (.contains n "trump")
+          is-rcp (.contains n " rcp ")
+          is-approval (.contains n " approval ")]
+        (and is-open is-trump is-rcp is-approval)))
 
-(defn maintain-relevant-mkts [state end-chan]
+(defn maintain-relevant-mkts [state strat-state end-chan]
   (l/log :info "Starting relevant market maintenance for RCP")
-  nil)
-
-(defn nope [all rel end-chan]
   (let [rel-chan (async/chan)]
     ; kick off a go routine to filter markets down to relevant markets
-    ; and update the rel channel with the results
+    ; and update the strategy with the results
     (async/go-loop []
-      (let [[val _] (async/alts! [rel-chan end-chan])]
-        (println "GOT IT" val)
-        (when (some? val)
-          (let [rel-mkts (filter is-relevant-mkt val)]
-            (l/log :info "Updating relevant markets" {:rel-count (count rel-mkts)
-                                                      :total-count (count val)})
-            (send rel (constantly rel-mkts))
+      (let [[mkts _] (async/alts! [rel-chan end-chan])]
+        (when (some? mkts)
+          (let [rel-mkts (filter is-relevant-mkt mkts)]
+            (l/log :info "Updating relevant markets for RCP" {:rel-count (count rel-mkts)
+                                                              :total-count (count mkts)})
+            (send strat-state #(merge % {:mkts rel-mkts}))
             (recur)))))
-    ; watch for changes to the all agent and send new values to our go routine
-    (add-watch all :rel #(async/>!! rel-chan %4))))
+    ; watch for changes to predictit markets and send new values to our go routine
+    (add-watch
+        (:venue-state state)
+        ::rel-mkts
+        #(->> %4
+              :com.adamgberger.predictit.venues.predictit/predictit
+              :mkts
+              (async/>!! rel-chan)))))
 
 (defn run [state end-chan]
-    (maintain-relevant-mkts state end-chan)
-    (async/<!! end-chan))
+    (let [strat-state (agent {})]
+        (maintain-relevant-mkts state strat-state end-chan)
+        {::state strat-state}))
