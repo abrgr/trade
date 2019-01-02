@@ -24,4 +24,5 @@
      approval-538/id approval-538/get-current})
 
 (defn start-all [state end-chan]
-    (map #(run-input state end-chan (first %) (second %)) inputs))
+    (doseq [[id input] inputs]
+        (run-input state end-chan id input)))

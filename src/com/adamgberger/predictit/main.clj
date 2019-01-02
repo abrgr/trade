@@ -93,6 +93,61 @@
       #(l/log :warn "Stopping state watchdog")
       end-chan)))
 
+(defn update-order-book [state venue-id market-id contract-id val]
+  (send
+    (:venue-state state)
+    #(assoc-in
+      %
+      [venue-id :order-books {:market-id market-id
+                              :contract-id contract-id}]
+      val)))
+
+(defn all-order-book-reqs [venue-state venue-id]
+  (->> (get-in venue-state [venue-id :req-order-books])
+       vals
+       (apply concat)
+       (into #{})))
+
+(defn continue-monitoring-order-book [state venue-id market-id contract-id]
+  (let [venue-state @(:venue-state state)
+        req-books (all-order-book-reqs venue-state venue-id)
+        tgt {:contract-id contract-id
+             :market-id market-id}]
+    (->> req-books
+         (filter #(= tgt (select-keys % [:contract-id :market-id])))
+         empty?
+         not)))
+
+(defn maintain-order-book [state end-chan venue-id venue req]
+  (l/log :info "Starting watch of order book" {:req req})
+  (let [{:keys [market-id market-name contract-id]} req]
+    (v/monitor-order-book
+      venue
+      market-id
+      market-name
+      contract-id
+      (partial update-order-book state venue-id market-id contract-id)
+      (partial continue-monitoring-order-book state venue-id))))
+
+(defn maintain-order-books [state end-chan]
+  ; monitor state -> venue-state -> venue-id -> :req-order-books -> strat-id for sets of maps like this:
+  ; {:market-id x :market-name x :contract-id y}
+  (add-watch
+    (:venue-state state)
+    ::maintain-order-books
+    (fn [_ _ old new]
+      (let [venue-ids (set (concat (keys old) (keys new)))]
+        (doseq [venue-id venue-ids]
+          (let [new-reqs (all-order-book-reqs new venue-id)
+                old-reqs (all-order-book-reqs old venue-id)
+                added (clojure.set/difference new-reqs old-reqs)
+                venue (->> state
+                           :venues
+                           (filter #(= venue-id (v/id %)))
+                           first)]
+            (doseq [to-add added]
+              (maintain-order-book state end-chan venue-id venue to-add))))))))
+
 (defn run-trading [creds end-chan]
   (let [state {:venues (map #(% creds) (vs/venue-makers))
                :venue-state (agent {})
@@ -102,6 +157,7 @@
     (maintain-markets state end-chan)
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
+    (maintain-order-books state end-chan)
     (inputs/start-all state end-chan)
     (state-watchdog state end-chan)
     (async/<!! end-chan)))

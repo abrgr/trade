@@ -119,3 +119,10 @@
       (if keep-going?
         (recur)
         (done)))))
+
+(defn add-guarded-watch-in [agt id keypath guard f]
+    (letfn [(w [_ _ old new]
+                (let [new-v (get-in new keypath)
+                      old-v (get-in old keypath)]
+                    (when (guard old-v new-v) (f new-v))))]
+        (add-watch agt id w)))

@@ -1,7 +1,10 @@
 (ns com.adamgberger.predictit.strategies.approval-rating-rcp
   (:require [clojure.core.async :as async]
-            [com.adamgberger.predictit.lib.log :as l])
+            [com.adamgberger.predictit.lib.log :as l]
+            [com.adamgberger.predictit.lib.utils :as utils])
   (:gen-class))
+
+(def venue-id :com.adamgberger.predictit.venues.predictit/predictit)
 
 (defn is-relevant-mkt [mkt]
     (let [n (-> mkt :market-name .toLowerCase)
@@ -13,27 +16,51 @@
 
 (defn maintain-relevant-mkts [state strat-state end-chan]
   (l/log :info "Starting relevant market maintenance for RCP")
-  (let [rel-chan (async/chan)
-        fwd-if-present (fn [_ _ _ new-val]
-                        (let [mkts (get-in new-val [:com.adamgberger.predictit.venues.predictit/predictit :mkts])]
-                            (when (some? mkts) (async/>!! rel-chan mkts))))]
+  (let [rel-chan (async/chan)]
     ; kick off a go routine to filter markets down to relevant markets
     ; and update the strategy with the results
     (async/go-loop []
       (let [[mkts _] (async/alts! [rel-chan end-chan])]
         (when (some? mkts)
-          (let [rel-mkts (filter is-relevant-mkt mkts)]
+          (let [rel-mkts (->> mkts
+                              (filter is-relevant-mkt)
+                              (into []))]
             (l/log :info "Updating relevant markets for RCP" {:rel-count (count rel-mkts)
                                                               :total-count (count mkts)})
             (send strat-state #(merge % {:mkts rel-mkts}))
             (recur)))))
     ; watch for changes to predictit markets and send new values to our go routine
-    (add-watch
+    (utils/add-guarded-watch-in
         (:venue-state state)
         ::rel-mkts
-        fwd-if-present)))
+        [venue-id :mkts]
+        #(and (not= %1 %2) (some? %2))
+        #(async/>!! rel-chan %))))
+
+(defn maintain-order-books [state strat-state end-chan]
+    (utils/add-guarded-watch-in
+        strat-state
+        ::maintain-order-books
+        [:mkts]
+        not=
+        (fn [mkts]
+            (let [ctrct-to-book-req (fn [mkt-id mkt-name c]
+                                        {:market-id mkt-id
+                                         :market-name mkt-name
+                                         :contract-id (:contract-id c)})
+                  mkt-to-book-reqs #(map
+                                        (partial ctrct-to-book-req (:market-id %) (:market-name %))
+                                        (:contracts %))
+                  needed-order-books (->> mkts
+                                          (mapcat mkt-to-book-reqs)
+                                          (into #{}))
+                  updater #(assoc-in % [venue-id :req-order-books ::id] needed-order-books)
+                  venue-state (:venue-state state)]
+                (l/log :info "Requesting order books" {:needed-order-books needed-order-books})
+                (send venue-state updater)))))
 
 (defn run [state end-chan]
     (let [strat-state (agent {})]
         (maintain-relevant-mkts state strat-state end-chan)
+        (maintain-order-books state strat-state end-chan)
         {::state strat-state}))

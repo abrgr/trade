@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.venues.predictit
-  (:require [com.adamgberger.predictit.venues.venue :as v]
+  (:require [clojure.core.async :as async]
+            [com.adamgberger.predictit.venues.venue :as v]
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.lib.utils :as utils]
             [com.adamgberger.predictit.apis.predictit :as api])
@@ -67,6 +68,11 @@
              (map adapt-pos)
              (into []))))
 
+(defn- -monitor-order-book
+    [venue market-id market-name contract-id on-update continue-monitoring]
+    (async/go
+        (api/monitor-order-book (:auth venue) market-id market-name contract-id on-update continue-monitoring)))
+
 (defn make-venue
     "Creates a venue"
     [creds]
@@ -75,4 +81,6 @@
             (id [this] ::predictit)
             (current-available-balance [this] (-current-available-balance auth))
             (available-markets [this] (-available-markets auth))
-            (positions [this] (-positions auth)))))
+            (positions [this] (-positions auth))
+            (monitor-order-book [this market-id market-name contract-id on-update continue-monitoring]
+                (-monitor-order-book auth market-id market-name contract-id on-update continue-monitoring)))))
