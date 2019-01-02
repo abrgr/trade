@@ -14,25 +14,13 @@
 
 (defn- -available-markets
     [venue]
-    (let [adapt-contract (fn [c]
-                            {:contract-id (:contractId c)
-                             :name (:contractName c)
-                             :started-at (:startDate c)
-                             :ends-at (:endDate c)
-                             :vol (:totalTrades c)
-                             :last-trade (:lastTradePrice c)
-                             :max-val (:maxShareValue c)})
-          adapt-mkt (fn [m]
+    (let [adapt-mkt (fn [m]
                         {:market-id (:marketId m)
                          :market-name (:marketName m)
                          :market-url (str "https://www.predictit.org/markets/detail/" (:marketId m) "/" (:marketUrl m))
                          :total-trades (:totalTrades m)
                          :total-shares-traded (:totalSharesTraded m)
-                         :status (if (= (:status m) "Open") :open :closed)
-                         :contracts (->> m
-                                         :contracts
-                                         (map adapt-contract)
-                                         (into []))})
+                         :status (if (= (:status m) "Open") :open :closed)})
           mkts (api/get-markets (:auth venue))]
         (->> mkts
              :markets
@@ -69,9 +57,24 @@
              (into []))))
 
 (defn- -monitor-order-book
-    [venue market-id market-name contract-id on-update continue-monitoring]
+    [venue market-id full-market-url contract-id on-update continue-monitoring]
     (async/go
-        (api/monitor-order-book (:auth venue) market-id market-name contract-id on-update continue-monitoring)))
+        (api/monitor-order-book (:auth venue) market-id full-market-url contract-id on-update continue-monitoring)))
+
+(defn- -contracts
+    [venue market-id full-market-url]
+    (let [resp (api/get-contracts venue market-id full-market-url)
+          adapt-contract (fn [c]
+                            {:contract-id (:contractId c)
+                             :contract-name (:contractName c)
+                             :date-opened (:dateOpened c)
+                             :is-active (:isActive c)
+                             :is-open (:isOpen c)
+                             :is-trading-suspended (:isTradingSuspended c)})]
+        (->> resp
+             :contracts
+             (map adapt-contract)
+             (into []))))
 
 (defn make-venue
     "Creates a venue"
@@ -82,5 +85,6 @@
             (current-available-balance [this] (-current-available-balance auth))
             (available-markets [this] (-available-markets auth))
             (positions [this] (-positions auth))
+            (contracts [this market-id full-market-url] (-contracts auth market-id full-market-url))
             (monitor-order-book [this market-id market-name contract-id on-update continue-monitoring]
                 (-monitor-order-book auth market-id market-name contract-id on-update continue-monitoring)))))

@@ -44,15 +44,8 @@
         [:mkts]
         not=
         (fn [mkts]
-            (let [ctrct-to-book-req (fn [mkt-id mkt-name c]
-                                        {:market-id mkt-id
-                                         :market-name mkt-name
-                                         :contract-id (:contract-id c)})
-                  mkt-to-book-reqs #(map
-                                        (partial ctrct-to-book-req (:market-id %) (:market-name %))
-                                        (:contracts %))
-                  needed-order-books (->> mkts
-                                          (mapcat mkt-to-book-reqs)
+            (let [needed-order-books (->> mkts
+                                          (map #(select-keys % [:market-id :market-url :market-name]))
                                           (into #{}))
                   updater #(assoc-in % [venue-id :req-order-books ::id] needed-order-books)
                   venue-state (:venue-state state)]

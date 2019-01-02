@@ -93,14 +93,14 @@
       #(l/log :warn "Stopping state watchdog")
       end-chan)))
 
-(defn update-order-book [state venue-id market-id contract-id val]
+(defn update-order-book [state venue-id market-id contract val]
   (send
     (:venue-state state)
     #(assoc-in
       %
-      [venue-id :order-books {:market-id market-id
-                              :contract-id contract-id}]
-      val)))
+      [venue-id :order-books market-id (:contract-id contract)]
+      {:contract contract
+       :book val})))
 
 (defn all-order-book-reqs [venue-state venue-id]
   (->> (get-in venue-state [venue-id :req-order-books])
@@ -110,24 +110,25 @@
 
 (defn continue-monitoring-order-book [state venue-id market-id contract-id]
   (let [venue-state @(:venue-state state)
-        req-books (all-order-book-reqs venue-state venue-id)
-        tgt {:contract-id contract-id
-             :market-id market-id}]
+        req-books (all-order-book-reqs venue-state venue-id)]
     (->> req-books
-         (filter #(= tgt (select-keys % [:contract-id :market-id])))
+         (filter #(= market-id (:market-id %)))
          empty?
          not)))
 
 (defn maintain-order-book [state end-chan venue-id venue req]
   (l/log :info "Starting watch of order book" {:req req})
-  (let [{:keys [market-id market-name contract-id]} req]
+  (let [{:keys [market-id market-url]} req
+  ;;;; TODO!! we're not storing all contracts
+        contracts (v/contracts venue market-id market-url)]
+    (doseq [contract contracts]
     (v/monitor-order-book
       venue
       market-id
-      market-name
-      contract-id
-      (partial update-order-book state venue-id market-id contract-id)
-      (partial continue-monitoring-order-book state venue-id))))
+        market-url
+        (:contract-id contract)
+        (partial update-order-book state venue-id market-id contract)
+        (partial continue-monitoring-order-book state venue-id)))))
 
 (defn maintain-order-books [state end-chan]
   ; monitor state -> venue-state -> venue-id -> :req-order-books -> strat-id for sets of maps like this:

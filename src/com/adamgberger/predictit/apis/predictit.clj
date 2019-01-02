@@ -266,10 +266,10 @@
          :quantity 4453
          :tradeType 0}
         ...]}"
-    [auth market-id market-name contract-id on-update continue-monitoring]
+    [auth market-id full-market-url contract-id on-update continue-monitoring]
     (l/with-log :debug "Monitor order-book"
         (let [url (predictit-firebase-url (str "/contractOrderBook/" contract-id ".json"))
-              headers (->> (from-page (predictit-site-url (str "/markets/detail/" market-id "/" (.replace market-name " " "-"))))
+              headers (->> (from-page full-market-url)
                            (merge {"Accept" "text/event-stream"}))
               force-coll #(if (coll? %) % [])
               value-fns {:timestamp #(java.time.Instant/ofEpochMilli (* 1000 (Float/parseFloat %)))
@@ -311,8 +311,8 @@
                         (merge (json-req))
                         (merge (with-auth auth)))
             value-fns {:userInvestment utils/to-decimal
-                        :userMaxPayout utils/to-decimal
-                        :userAveragePricePerShare utils/to-decimal}
+                       :userMaxPayout utils/to-decimal
+                       :userAveragePricePerShare utils/to-decimal}
             qs (str "?sort=traded&sortParameter=ALL")
             url (predictit-api-url (str "/Profile/Shares" qs))
             resp (http-get url {:headers headers})]
@@ -324,3 +324,46 @@
                 (when suspended?
                     (throw (ex-info "TRADING SUSPENDED" {:suspension-msg suspension-msg})))
                 {:positions mkts}))))
+
+(defn get-contracts
+    "Retrieves contracts for a market.
+     Returns something like:
+     {:contracts [{:contractId 5174,
+                   :contractName \"60 or more\",
+                   :marketId 2891,
+                   :marketName \"How many Senate seats will the GOP hold after 2018 midterms?\",
+                   :contractImageUrl \"https://az620379.vo.msecnd.net/images/Contracts/cc8f1b1a-4ac1-426a-a706-b7a26ed45d42.jpg\",
+                   :contractImageSmallUrl \"https://az620379.vo.msecnd.net/images/Contracts/small_cc8f1b1a-4ac1-426a-a706-b7a26ed45d42.jpg\",
+                   :isActive true,
+                   :isOpen true,
+                   :lastTradePrice 0.01,
+                   :lastClosePrice 0.01,
+                   :bestYesPrice 0.01,
+                   :bestYesQuantity 842,
+                   :bestNoPrice null,
+                   :bestNoQuantity 0,
+                   :userPrediction 0,
+                   :userQuantity 0,
+                   :userOpenOrdersBuyQuantity 0,
+                   :userOpenOrdersSellQuantity 0,
+                   :userAveragePricePerShare 0.000000,
+                   :isTradingSuspended false,
+                   :dateOpened \"2017-01-19T19:34:37.56\",
+                   :hiddenByDefault false,
+                   :displayOrder 0}
+                  ...]}"
+    [auth market-id full-market-url]
+    (l/with-log :debug "Getting contracts"
+        (let [headers (->> (from-page full-market-url)
+                           (merge (json-req))
+                           (merge (with-auth auth)))
+              resp (http-get (predictit-api-url (str "/Market/" market-id "/Contracts")) {:headers headers})
+              value-fns {:bestYesPrice utils/to-decimal
+                         :bestNoPrice utils/to-decimal
+                         :lastTradePrice utils/to-decimal
+                         :lastClosePrice utils/to-decimal
+                         :userAveragePricePerShare utils/to-decimal
+                         :dateOpened utils/parse-isoish-datetime}]
+            (when-not (-> resp :body some?)
+                (throw (ex-info "Bad contracts response" {:resp resp})))
+            {:contracts (resp-from-json resp)})))

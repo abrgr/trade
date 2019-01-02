@@ -30,12 +30,14 @@
                                         v)))))
 
 (defn to-decimal [n]
-    (java.math.BigDecimal. n))
+    (if (nil? n)
+      nil
+      (java.math.BigDecimal. n)))
 
 (defn parse-ext-iso-date
   "E.x. 1986-11-22"
   [s]
-  (-> s
+  (some-> s
       java.time.LocalDate/parse
       (.atStartOfDay (java.time.ZoneId/of "UTC"))
       (.truncatedTo java.time.temporal.ChronoUnit/DAYS)
@@ -44,14 +46,14 @@
 (defn parse-rfc1123-datetime
   "E.x. Fri, 28 Dec 2018 00:00:00 -0600"
   [s]
-  (-> s
+  (some-> s
       (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/RFC_1123_DATE_TIME))
       (.toInstant)))
 
 (defn parse-localish-datetime
   "E.x. 11/22/1986 12:30 AM (ET)"
   [s]
-  (if (= s "N/A")
+  (if (or (nil? s) (= s "N/A"))
       nil
       (try
           (let [formatter (java.time.format.DateTimeFormatter/ofPattern "MM/dd/yyyy hh:mm a (z)")
@@ -65,7 +67,7 @@
   "E.x. 2011-12-03T10:15:30+01:00"
   [s]
   (try
-      (-> s
+      (some-> s
           (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
           .toInstant)
       (catch java.time.format.DateTimeParseException e
@@ -75,9 +77,11 @@
   "E.x. 2018-12-03T11:30:20.00"
   [s]
   (try
-      (java.time.Instant/parse (if (.endsWith s "Z") s (str s "Z")))
-      (catch java.time.format.DateTimeParseException e
-          (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
+    (if (nil? s)
+      nil
+      (java.time.Instant/parse (if (.endsWith s "Z") s (str s "Z"))))
+    (catch java.time.format.DateTimeParseException e
+        (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
 
 (defn truncated-to-day
   [d]
