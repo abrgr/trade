@@ -76,10 +76,39 @@
              (map adapt-contract)
              (into []))))
 
+(def auth-cache-fname ".predictit-auth")
+
+(defn- -get-cached-auth [email]
+    (letfn [(if-auth-valid [auth]
+                (if (and (some? auth)
+                         (some? (-> auth :auth :access_token))
+                         (= (-> auth :auth :userName) email)
+                         (<= (compare (java.time.Instant/now) (-> auth :auth :.expires utils/parse-offset-datetime)) 0))
+                    auth
+                    nil))]
+        (if (->> auth-cache-fname clojure.java.io/file .exists)
+            (-> auth-cache-fname
+                slurp
+                clojure.edn/read-string
+                if-auth-valid)
+            (do
+                (l/log :info "auth cache does not exist" {:fname auth-cache-fname})
+                nil))))
+
+(defn- -get-auth
+    [email pwd]
+    (let [cached-auth (-get-cached-auth email)]
+        (if (some? cached-auth)
+            (do (l/log :info "Using cached auth for predictit")
+                cached-auth)
+            (let [new-auth (api/auth email pwd)]
+                (spit auth-cache-fname (pr-str new-auth))
+                new-auth))))
+
 (defn make-venue
     "Creates a venue"
     [creds]
-    (let [auth (apply api/auth (map creds [:email :pwd]))]
+    (let [auth (apply -get-auth (map creds [:email :pwd]))]
         (reify v/Venue
             (id [this] ::predictit)
             (current-available-balance [this] (-current-available-balance auth))

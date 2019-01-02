@@ -113,9 +113,6 @@
              :.issued 2018-12-30T18:29:55.0000000+00:00
              :.expires 2018-12-31T01:29:55.0000000+00:00}}"
     [email pwd]
-    (if true
-        ; they probably monitor login more closely than other stuff
-        {:auth {:access_token "uIKtr0uE3DjdBfYKnQmMxpQe1gWu3clyM9CFaae6DG0xKbXOVkCEYoMSaZn11Tial-I9-A6wOUgpwIkw0wTRuKOppFbweXfPUFsO4M70wpB-Tfm--9BlMC2hM0gM1jJ5HIfqv7KnzERsa9zkvMV257_cVs5JEA-fT6sl1sltZLmk4yz1ZyiEU2sdGfQYOrNbbNQykfinsl00t46ebKW516iIJ7JaUF4ujJqmw_aw6UHvKoGCuBW0w9dtvhHPQuHyw2DD2jtlzeMmRzW_nufu8dNUYVImHf5l7fMJ7km-AH9q5hLAoY95PGXUBKivH5ouvqZgBi9j09LYG6-R81spdqm7FbrV_rPtTv0os1OER2a6JlXPsPrzi7y8KUGwXbRAPmevRRb4Lz_ulCVltfdYfxCGTZH4EuMx8aqxmZRPTnXyXYZfKh0fPYcmsPpHz-CaH3QGbgPQ9wmHy_WXS5WNLKCUF2ioz68EL1-ezgiY_P0"}}
     (l/with-log :debug (str "Authenticating with user [" email "]")
         (let [params {:headers (from-page (predictit-site-url ""))
                       :form-params
@@ -128,7 +125,7 @@
                        :.expires utils/parse-offset-datetime}]
             (when-not (-> resp :body some?)
                 (throw (ex-info "Bad auth response" {:resp resp})))
-            {:auth (resp-from-json resp)}))))
+            {:auth (resp-from-json resp)})))
 
 (defn get-balance
     "Retrieves current balance.

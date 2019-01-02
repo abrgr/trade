@@ -94,6 +94,9 @@
       end-chan)))
 
 (defn update-order-book [state venue-id market-id contract val]
+  (l/log :info "Received order book update" {:venue-id venue-id
+                                             :market-id market-id
+                                             :contract-id (:contract-id contract)})
   (send
     (:venue-state state)
     #(assoc-in
@@ -117,11 +120,14 @@
          not)))
 
 (defn maintain-order-book [state end-chan venue-id venue req]
-  (l/log :info "Starting watch of order book" {:req req})
+  (l/log :info "Starting watch of order book" {:venue-id venue-id
+                                               :req req})
   (let [{:keys [market-id market-url]} req
-  ;;;; TODO!! we're not storing all contracts
         contracts (v/contracts venue market-id market-url)]
     (doseq [contract contracts]
+      (send
+        (:venue-state state)
+        #(assoc-in % [venue-id :order-books market-id (:contract-id contract) :contract contract] contract))
     (v/monitor-order-book
       venue
       market-id
