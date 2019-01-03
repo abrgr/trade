@@ -127,10 +127,10 @@
     (doseq [contract contracts]
       (send
         (:venue-state state)
-        #(assoc-in % [venue-id :order-books market-id (:contract-id contract) :contract contract] contract))
-    (v/monitor-order-book
-      venue
-      market-id
+        #(assoc-in % [venue-id :order-books market-id (:contract-id contract) :contract] contract))
+      (v/monitor-order-book
+        venue
+        market-id
         market-url
         (:contract-id contract)
         (partial update-order-book state venue-id market-id contract)
@@ -172,7 +172,7 @@
 (defn -main
   [& args]
   (let [end-chan (async/chan)]
-    (run-trading {:email "adam.g.berger@gmail.com" :pwd ""} end-chan)))
+    (run-trading {:email "adam.g.berger@gmail.com" :pwd "nope"} end-chan)))
 
 (defn market-trader [market-id goal venue]
   ; start all inputs for the goal (inputs are order books, 3rd-party sources, etc)
