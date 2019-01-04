@@ -22,6 +22,12 @@
      :ex-msg (.getMessage ex)
      :ex-cls (-> ex .getClass .getCanonicalName)})
 
+(defn logging-agent [n agt]
+    (set-error-handler!
+        agt
+        #(log :error "Agent error" (merge {:agent n} (ex-log-msg %2))))
+    agt)
+
 (defmacro with-log [level msg & body]
     `(try
         (let [start# (java.time.Instant/now)

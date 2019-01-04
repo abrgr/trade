@@ -5,6 +5,7 @@
   (:gen-class))
 
 (def venue-id :com.adamgberger.predictit.venues.predictit/predictit)
+(def rcp-input-id :com.adamgberger.predictit.inputs.approval-rating-rcp/id)
 
 (defn is-relevant-mkt [mkt]
     (let [n (-> mkt :market-name .toLowerCase)
@@ -59,11 +60,11 @@
           higher-match (re-matches #"(\d+[.]\d)% or higher" c-name)
           range-match (re-matches #"(\d+[.]\d)%\s*[-]\s*(\d+[.]\d)%" c-name)]
         (cond
-            (some? lower-match) {:lower-inclusive -1100
+            (some? lower-match) {:lower-inclusive (utils/to-decimal -1100)
                                  :upper-inclusive (-> lower-match second utils/to-decimal)}
             (some? higher-match) {:lower-inclusive (-> higher-match second utils/to-decimal)
-                                  :upper-inclusive 1000}
-            (some? range-match) {:lower-inclusve (-> range-match second utils/to-decimal)
+                                  :upper-inclusive (utils/to-decimal 1000)}
+            (some? range-match) {:lower-inclusive (-> range-match second utils/to-decimal)
                                  :upper-inclusive (-> range-match next second utils/to-decimal)}
             :else nil)))
 
@@ -87,15 +88,14 @@
             (some? str-match) (next-md (-> str-match second months) (-> str-match next second Integer/parseInt))
             :else nil)))
 
-(defn adapt-contract [c order-book]
+(defn adapt-contract [c]
     (let [bounds (-> c :contract-name adapt-contract-bounds)
           id (:contract-id c)]
         (if (or (nil? bounds))
             (do (l/log :error "Invalid RCP contract" {:contract c})
                 nil)
             {:contract-id id
-             :bounds bounds
-             :order-book order-book})))
+             :bounds bounds})))
 
 (defn adapt-market [mkt contracts]
     (let [end-date (-> mkt :market-name adapt-market-name-to-end-date)
@@ -115,16 +115,15 @@
     (utils/add-guarded-watch-in
         (:venue-state state)
         ::maintain-local-markets
-        [venue-id :order-books]
+        [venue-id :contracts]
         not=
-        (fn [books-by-mkt-and-ctrct]
+        (fn [contracts-by-mkt-and-ctrct]
             (let [mkts (:mkts @strat-state) ; TODO: are we guaranteed that @strat-state is at least as fresh as venue-state?
                   adapt-mkt (fn [mkt]
                                 (let [id (:market-id mkt)
-                                      books-by-ctrct (get books-by-mkt-and-ctrct id)
-                                      books (-> books-by-ctrct vals)
-                                      adapted-contracts (->> books
-                                                             (map #(adapt-contract (:contract %) (:book %)))
+                                      adapted-contracts (->> (get contracts-by-mkt-and-ctrct id)
+                                                             vals
+                                                             (map adapt-contract)
                                                              (into []))]
                                     (adapt-market mkt adapted-contracts)))
                   adapted-mkts (->> mkts
@@ -134,9 +133,83 @@
                   updater #(assoc % :tradable-mkts adapted-mkts)]
                 (send strat-state updater)))))
 
+(defn contract-prob-dist [dist-by-days end-date approval-rating contracts]
+    (->> contracts
+         (map
+            (fn [contract]
+                (let [day-count (inc (.between java.time.temporal.ChronoUnit/DAYS
+                                          (java.time.LocalDate/now)
+                                          end-date))
+                      dist (get dist-by-days day-count)
+                      bounds (:bounds contract)
+                      {:keys [lower-inclusive upper-inclusive]} bounds
+                      l (- lower-inclusive approval-rating)
+                      u (- upper-inclusive approval-rating)
+                      pr (some-> dist (.probability l u))]
+                    (if (some? pr)
+                        [(:contract-id contract) pr]
+                        nil))))
+         (into {})))
+
+(defn mkt-prob-dists [dist-by-days tradable-mkts approval-rating]
+    (->> tradable-mkts
+         (map (fn [mkt] [(:market-id mkt) (contract-prob-dist dist-by-days (:end-date mkt) approval-rating (:contracts mkt))]))
+         (into {})))
+
+(defn update-probs [state strat-state end-chan]
+    (l/log :info "Updating RCP probabilities")
+    (let [approval (-> @(:inputs state) rcp-input-id :current :approval)
+          tradable-mkts (:tradable-mkts @strat-state)
+          dist-by-days (:dist-by-days @strat-state)
+          prob-dist (when (and (some? tradable-mkts)
+                               (some? approval))
+                          (mkt-prob-dists dist-by-days tradable-mkts approval))]
+        (when (some? prob-dist)
+            (send strat-state #(assoc % :prob-dist prob-dist)))))
+
+(defn maintain-probs [state strat-state end-chan]
+    ; TODO: make a decent macro for this
+    (letfn [(upd [_]
+                (update-probs state strat-state end-chan))
+            (valid? [old new]
+                (and (some? new)
+                     (not= old new)))]
+        (utils/add-guarded-watch-in
+            (:inputs state)
+            ::maintain-probs
+            [rcp-input-id :current :approval]
+            valid?
+            upd)
+        (utils/add-guarded-watch-in
+            (:venue-state state)
+            ::maintain-probs
+            [venue-id :contracts]
+            valid?
+            upd)
+        (utils/add-guarded-watch-in
+            strat-state
+            ::maintain-probs-for-mkts
+            [:tradable-mkts]
+            valid?
+            upd)
+        (utils/add-guarded-watch-in
+            strat-state
+            ::maintain-probs-for-cfg
+            [:dist-by-days]
+            valid?
+            upd)))
+
 (defn run [state end-chan]
-    (let [strat-state (agent {})]
-        (maintain-relevant-mkts state strat-state end-chan)
-        (maintain-order-books state strat-state end-chan)
-        (maintain-local-markets state strat-state end-chan)
-        {::state strat-state}))
+    (let [dist-by-days {1 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
+                        2 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
+                        3 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
+                        4 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
+                        5 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
+                        6 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
+                        7 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)}
+          strat-state (l/logging-agent "rcp-strat" (agent {:dist-by-days dist-by-days}))]
+          (maintain-relevant-mkts state strat-state end-chan)
+          (maintain-order-books state strat-state end-chan)
+          (maintain-local-markets state strat-state end-chan)
+          (maintain-probs state strat-state end-chan)
+          {::state strat-state}))

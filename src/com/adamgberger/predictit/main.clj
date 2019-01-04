@@ -89,21 +89,20 @@
   (let [handler #(l/log :info "Current state" {:state (deref-map state)})]
     (utils/repeatedly-until-closed
       handler
-      60000
+      20000
       #(l/log :warn "Stopping state watchdog")
       end-chan)))
 
-(defn update-order-book [state venue-id market-id contract val]
+(defn update-order-book [state venue-id market-id contract-id val]
   (l/log :info "Received order book update" {:venue-id venue-id
                                              :market-id market-id
-                                             :contract-id (:contract-id contract)})
+                                             :contract-id contract-id})
   (send
     (:venue-state state)
     #(assoc-in
       %
-      [venue-id :order-books market-id (:contract-id contract)]
-      {:contract contract
-       :book val})))
+      [venue-id :order-books market-id contract-id]
+      val)))
 
 (defn all-order-book-reqs [venue-state venue-id]
   (->> (get-in venue-state [venue-id :req-order-books])
@@ -127,13 +126,13 @@
     (doseq [contract contracts]
       (send
         (:venue-state state)
-        #(assoc-in % [venue-id :order-books market-id (:contract-id contract) :contract] contract))
+        #(assoc-in % [venue-id :contracts market-id (:contract-id contract)] contract))
       (v/monitor-order-book
         venue
         market-id
         market-url
         (:contract-id contract)
-        (partial update-order-book state venue-id market-id contract)
+        (partial update-order-book state venue-id market-id (:contract-id contract))
         (partial continue-monitoring-order-book state venue-id)))))
 
 (defn maintain-order-books [state end-chan]
@@ -157,9 +156,9 @@
 
 (defn run-trading [creds end-chan]
   (let [state {:venues (map #(% creds) (vs/venue-makers))
-               :venue-state (agent {})
+               :venue-state (l/logging-agent "venue-state" (agent {}))
                :strats {}
-               :inputs (agent {})}
+               :inputs (l/logging-agent "inputs" (agent {}))}
         state (assoc-in state [:strats] (start-strategies state end-chan))]
     (maintain-markets state end-chan)
     (maintain-balances state end-chan)
@@ -173,9 +172,3 @@
   [& args]
   (let [end-chan (async/chan)]
     (run-trading {:email "adam.g.berger@gmail.com" :pwd "nope"} end-chan)))
-
-(defn market-trader [market-id goal venue]
-  ; start all inputs for the goal (inputs are order books, 3rd-party sources, etc)
-  ; start all analyzers for the goal (analyzers take inputs and produce probability distributions across results and urgency scores)
-  ; start all executors for the goal (executors take analyzer results, current positions, and an order book and enter trades)
-  )
