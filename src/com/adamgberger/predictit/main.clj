@@ -42,10 +42,10 @@
               mkts))]
     (maintain-venue-state :mkts 600000 get-mkts state end-chan)))
 
-(defn start-strategies [state end-chan]
+(defn start-strategies [cfg state end-chan]
   (reduce
     (fn [strats next]
-      (merge strats (next state end-chan)))
+      (merge strats (next cfg state end-chan)))
     {}
     (strats/all)))
 
@@ -154,12 +154,12 @@
             (doseq [to-add added]
               (maintain-order-book state end-chan venue-id venue to-add))))))))
 
-(defn run-trading [creds end-chan]
-  (let [state {:venues (map #(% creds) (vs/venue-makers))
+(defn run-trading [cfg end-chan]
+  (let [state {:venues (map #(% (:creds cfg)) (vs/venue-makers))
                :venue-state (l/logging-agent "venue-state" (agent {}))
                :strats {}
                :inputs (l/logging-agent "inputs" (agent {}))}
-        state (assoc-in state [:strats] (start-strategies state end-chan))]
+        state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))]
     (maintain-markets state end-chan)
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
@@ -170,5 +170,8 @@
 
 (defn -main
   [& args]
-  (let [end-chan (async/chan)]
-    (run-trading {:email "adam.g.berger@gmail.com" :pwd "nope"} end-chan)))
+  (let [end-chan (async/chan)
+        cfg (-> "config"
+                slurp
+                clojure.edn/read-string)]
+    (run-trading cfg end-chan)))

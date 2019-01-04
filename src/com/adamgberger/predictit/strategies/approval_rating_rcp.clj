@@ -137,9 +137,9 @@
     (->> contracts
          (map
             (fn [contract]
-                (let [day-count (inc (.between java.time.temporal.ChronoUnit/DAYS
+                (let [day-count (.between java.time.temporal.ChronoUnit/DAYS
                                           (java.time.LocalDate/now)
-                                          end-date))
+                                          end-date)
                       dist (get dist-by-days day-count)
                       bounds (:bounds contract)
                       {:keys [lower-inclusive upper-inclusive]} bounds
@@ -199,14 +199,13 @@
             valid?
             upd)))
 
-(defn run [state end-chan]
-    (let [dist-by-days {1 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
-                        2 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
-                        3 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
-                        4 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
-                        5 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
-                        6 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)
-                        7 (org.apache.commons.math3.distribution.NormalDistribution. 0.25 0.1)}
+(defn run [cfg state end-chan]
+    (let [dist-by-days (->> cfg
+                            :com.adamgberger.predictit.strategies.approval-rating-rcp
+                            :dist-by-days
+                            (map (fn [[days dist]]
+                                [days (org.apache.commons.math3.distribution.NormalDistribution. (:mean dist) (:std dist))]))
+                            (into {}))
           strat-state (l/logging-agent "rcp-strat" (agent {:dist-by-days dist-by-days}))]
           (maintain-relevant-mkts state strat-state end-chan)
           (maintain-order-books state strat-state end-chan)
