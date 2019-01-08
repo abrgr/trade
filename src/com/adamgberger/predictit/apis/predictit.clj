@@ -250,38 +250,40 @@
             resp (http-post (predictit-api-url "/Trade/CancelOffer/" order-id) params)]
             {:success true})))
 
+(defn get-order-book
+    "Retrieves current order book.
+     Returns something like this:
+     {:order-book {:contract-id 1234
+                   :noOrders []
+                   :yesOrders [
+                       {:contract-id
+                        :costPerShareNo 0.99
+                        :costPerShareYes 0.01
+                        :pricePerShare 0.01
+                        :quantity 4453
+                        :tradeType 0}
+                        ...]}"
+    [auth market-id full-market-url contract-id]
+    (l/with-log :debug "Get order book"
+        (let [headers (->> (from-page full-market-url)
+                        (merge (json-req))
+                        (merge (with-auth auth)))
+            value-fns {:userInvestment utils/to-decimal
+                       :userMaxPayout utils/to-decimal
+                       :userAveragePricePerShare utils/to-decimal}
+            url (predictit-api-url (str "/Trade/" contract-id "/OrderBook"))
+            resp (http-get url {:headers headers})]
+            (when-not (-> resp :body some?)
+                (throw (ex-info "Bad order book response" {:resp resp})))
+            {:order-book (merge (resp-from-json resp value-fns) {:contract-id contract-id})})))
+
 (defn monitor-order-book
     "Monitors the order book for a contract.
-     Invokes on-update with each order book update.  Checks (continue-monitoring market-id contract-id) at each iteration.
-     Updates look like:
-     {:noOrders []
-      :timestamp #inst 1546213580.64377
-      :yesOrders [
-        {:costPerShareNo 0.99
-         :costPerShareYes 0.01
-         :pricePerShare 0.01
-         :quantity 4453
-         :tradeType 0}
-        ...]}"
-    [auth market-id full-market-url contract-id on-update continue-monitoring]
+     Returns a lazy seq of order book updates.
+     Each update looks like the output of get-order-book."
+    [auth market-id full-market-url contract-id]
     (l/with-log :debug "Monitor order-book"
-        (let [url (predictit-firebase-url (str "/contractOrderBook/" contract-id ".json"))
-              headers (->> (from-page full-market-url)
-                           (merge {"Accept" "text/event-stream"}))
-              force-coll #(if (coll? %) % [])
-              value-fns {:timestamp #(java.time.Instant/ofEpochMilli (* 1000 (Float/parseFloat %)))
-                         :noOrders force-coll
-                         :yesOrders force-coll}
-              resp (http-get url {:headers headers :as :stream})]
-            (loop [should-repeat (try
-                                    (each-line (:body resp) on-update value-fns #(continue-monitoring market-id contract-id))
-                                    (catch Exception e
-                                        (l/log :warn "Exception in monitor-order-book" (l/ex-log-msg e))
-                                        (when (:should-retry (ex-data e)) (throw e))
-                                        :recur))]
-                (if (and (continue-monitoring market-id contract-id) (= :recur should-repeat))
-                    (recur (http-get url {:headers headers :as :stream}))
-                    nil)))))
+        (repeatedly (partial get-order-book auth market-id full-market-url contract-id))))
 
 (defn get-positions
     "Retrieves current holdings.

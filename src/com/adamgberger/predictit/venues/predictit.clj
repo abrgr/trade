@@ -57,9 +57,8 @@
              (into []))))
 
 (defn- -monitor-order-book
-    [venue market-id full-market-url contract-id on-update continue-monitoring]
-    (async/go
-        (api/monitor-order-book (:auth venue) market-id full-market-url contract-id on-update continue-monitoring)))
+    [venue market-id full-market-url contract-id]
+    (api/monitor-order-book (:auth venue) market-id full-market-url contract-id))
 
 (defn- -contracts
     [venue market-id full-market-url]
@@ -115,5 +114,5 @@
             (available-markets [this] (-available-markets auth))
             (positions [this] (-positions auth))
             (contracts [this market-id full-market-url] (-contracts auth market-id full-market-url))
-            (monitor-order-book [this market-id market-name contract-id on-update continue-monitoring]
-                (-monitor-order-book auth market-id market-name contract-id on-update continue-monitoring)))))
+            (monitor-order-book [this market-id market-name contract-id]
+                (-monitor-order-book auth market-id market-name contract-id)))))

@@ -118,22 +118,35 @@
          empty?
          not)))
 
+(defn monitor-order-book [state end-chan venue-id market-id contract-id order-book-updates]
+  (async/go-loop []
+    (update-order-book state venue-id market-id contract-id (first order-book-updates))
+    (let [interval 10000
+          keep-going? (async/alt!
+                        end-chan false
+                        (async/timeout interval) true)]
+      (if (and (continue-monitoring-order-book state venue-id market-id contract-id)
+               keep-going?)
+        (recur)
+        (l/log :warn "Stopping order book monitor" {:market-id market-id
+                                                    :contract-id contract-id})))))
+
 (defn maintain-order-book [state end-chan venue-id venue req]
   (l/log :info "Starting watch of order book" {:venue-id venue-id
                                                :req req})
   (let [{:keys [market-id market-url]} req
         contracts (v/contracts venue market-id market-url)]
     (doseq [contract contracts]
-      (send
-        (:venue-state state)
-        #(assoc-in % [venue-id :contracts market-id (:contract-id contract)] contract))
-      (v/monitor-order-book
-        venue
-        market-id
-        market-url
-        (:contract-id contract)
-        (partial update-order-book state venue-id market-id (:contract-id contract))
-        (partial continue-monitoring-order-book state venue-id)))))
+      (let [contract-id (:contract-id contract)]
+        (send
+          (:venue-state state)
+          #(assoc-in % [venue-id :contracts market-id contract-id] contract))
+        (->> (v/monitor-order-book
+              venue
+              market-id
+              market-url
+              contract-id)
+            (monitor-order-book state end-chan venue-id market-id contract-id))))))
 
 (defn maintain-order-books [state end-chan]
   ; monitor state -> venue-state -> venue-id -> :req-order-books -> strat-id for sets of maps like this:

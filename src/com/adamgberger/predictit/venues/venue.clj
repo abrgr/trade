@@ -7,4 +7,4 @@
   (available-markets [venue])
   (positions [venue])
   (contracts [venue market-id full-market-url])
-  (monitor-order-book [venue market-id full-market-url contract-id on-update continue-monitoring]))
+  (monitor-order-book [venue market-id full-market-url contract-id]))

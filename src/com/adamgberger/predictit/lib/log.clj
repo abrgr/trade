@@ -32,8 +32,7 @@
     `(try
         (let [start# (java.time.Instant/now)
               data# (do ~@body)]
-            (log ~level ~msg {:data data#
-                              :elapsed-ms (.until start# (java.time.Instant/now) java.time.temporal.ChronoUnit/MILLIS)})
+            (log ~level ~msg {:elapsed-ms (.until start# (java.time.Instant/now) java.time.temporal.ChronoUnit/MILLIS)})
             data#)
         (catch Exception ex#
             (log
