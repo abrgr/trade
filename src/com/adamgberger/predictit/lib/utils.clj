@@ -83,6 +83,14 @@
     (catch java.time.format.DateTimeParseException e
         (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
 
+(defn parse-human-date-with-day
+  "E.x. Thursday, January 10, 2019"
+  [s]
+  (try
+    (java.time.LocalDate/parse s (java.time.format.DateTimeFormatter/ofPattern "EEEE, MMMM dd, yyyy"))
+    (catch java.time.format.DateTimeParseException e
+      (l/log :warn "Un-parsable human date with day" {:input-string s}))))
+
 (defn parse-human-date-range-within
   "E.x. January 10 - 12, 2019"
   [s]
