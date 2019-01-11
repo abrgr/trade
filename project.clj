@@ -6,7 +6,9 @@
                  [org.clojure/core.async "0.4.490"]
                  [org.apache.commons/commons-math3 "3.2"]
                  [org.apache.tika/tika-core "1.20"]
-                 [org.apache.tika/tika-parsers "1.20"]]
+                 [org.apache.tika/tika-parsers "1.20"]
+                 [hickory "0.7.1"]
+                 [org.clojure/data.csv "0.1.4"]]
   :main ^:skip-aot com.adamgberger.predictit.main
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})

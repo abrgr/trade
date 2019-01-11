@@ -10,6 +10,8 @@
     [stream]
     (let [tika (org.apache.tika.Tika.)
           s (.parseToString tika stream)
+          intro (.substring s 0 500)
+          dates (u/parse-human-date-range-within intro)
           job-approval-idx (clojure.string/index-of s "President Trump Job Approval")
           question-idx (clojure.string/index-of s "Do you approve or disapprove of the way Donald Trump is handling his job as President?" job-approval-idx)
           header-idx (clojure.string/index-of s "Registered voters Gender Age" question-idx)
@@ -30,7 +32,8 @@
                                .trim
                                Integer/parseInt)]
         ; TODO: validate that somewhat-approve-idx immediately follows strongly-approve-idx i.f. header-idx i.f. question-idx i.f. job-approval-idx
-        (+ strongly-approve somewhat-approve)))
+        {:val (+ strongly-approve somewhat-approve)
+         :date (:end-date dates)}))
 
 (defn extract-link [html]
   (let [pat #"https://[^.]+.cloudfront.net/cumulus_uploads/document/[^/]+/tabs_Trump_Tweets_\d{8}.pdf"]
@@ -51,7 +54,6 @@
             (swap! most-recent-result (constantly {:res val :link pdf-link}))
             (cb val))
         #(l/log :error "Failed to get yougov-daily-total pdf" (merge {:url pdf-link} (l/ex-log-msg %)))))))
-
 
 (defn get-current [cb]
   (h/get

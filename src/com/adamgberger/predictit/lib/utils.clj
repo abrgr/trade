@@ -83,6 +83,35 @@
     (catch java.time.format.DateTimeParseException e
         (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
 
+(defn parse-human-date-range-within
+  "E.x. January 10 - 12, 2019"
+  [s]
+  (let [date-regex #"(January|February|March|April|May|June|July|August|September|October|November|December)\s*(\d+)\s*[-]\s*(\d+)\s*,\s*(\d+)"
+        match (re-find date-regex s)
+        [_ month start-day end-day year] match]
+    (if (nil? match)
+      (do (l/log :warn "Cannot find human date range" {:input-string s})
+          nil)
+      {:start-date (java.time.LocalDate/parse
+                    (str month " " start-day " " year)
+                    (java.time.format.DateTimeFormatter/ofPattern "MMMM d y"))
+       :end-date (java.time.LocalDate/parse
+                  (str month " " end-day " " year)
+                  (java.time.format.DateTimeFormatter/ofPattern "MMMM d y"))})))
+
+(defn parse-human-date-within
+  "E.x. January 10, 2019"
+  [s]
+  (let [date-regex #"(January|February|March|April|May|June|July|August|September|October|November|December)\s*(\d+)\s*,\s*(\d+)"
+        match (re-find date-regex s)
+        [_ month day year] match]
+    (if (nil? match)
+      (do (l/log :warn "Cannot find human date" {:input-string s})
+          nil)
+      (java.time.LocalDate/parse
+        (str month " " day " " year)
+        (java.time.format.DateTimeFormatter/ofPattern "MMMM d y")))))
+
 (defn truncated-to-day
   [d]
   (.truncatedTo d java.time.temporal.ChronoUnit/DAYS))

@@ -11,6 +11,8 @@
     (let [tika (org.apache.tika.Tika.)
           _ (.setMaxStringLength tika 1000000)
           s (.parseToString tika stream)
+          intro (.substring s 0 500)
+          dates (u/parse-human-date-range-within intro)
           job-approval-idx (clojure.string/last-index-of s "Trump Job Approval")
           question-idx (clojure.string/index-of s "Do you approve or disapprove of the way Donald Trump is handling his job as President?" job-approval-idx)
           header-1-idx (clojure.string/index-of s "Registered voters" question-idx)
@@ -34,7 +36,8 @@
                                .trim
                                Integer/parseInt)]
         ; TODO: validate
-        (+ strongly-approve somewhat-approve)))
+        {:val (+ strongly-approve somewhat-approve)
+         :date (:end-date dates)}))
 
 (defn extract-link [html]
   (let [pat #"https://[^.]+.cloudfront.net/cumulus_uploads/document/[^/]+/econTabReport.pdf"]
@@ -56,10 +59,9 @@
             (cb val))
         #(l/log :error "Failed to get yougov-weekly-registered pdf" (merge {:url pdf-link} (l/ex-log-msg %)))))))
 
-
 (defn get-current [cb]
   (h/get
-    "https://today.yougov.com/ratings/overview(popup:search/%22economist%20tables%20%22;type=surveys;period=hours)"
+    "https://today.yougov.com/ratings/overview(popup:search/%22economist%20tables%22;type=surveys;period=week)"
     {:async? true}
     #(check-search-results (:body %) cb)
     #(l/log :error "Failed to get yougov-weekly-registered search results" (l/ex-log-msg %))))
