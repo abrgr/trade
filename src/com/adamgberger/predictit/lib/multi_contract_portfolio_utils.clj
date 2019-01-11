@@ -9,59 +9,42 @@
            (org.apache.commons.math3.analysis MultivariateFunction))
   (:gen-class))
 
-(defn expected-portfolio-value
-    "Calculates the expected value of a portfolio of the given contracts.
-     Requires that (= (->> contract-positions (map :prob) +) 1)."
-    [contract-positions]
-    (let [contract-value (fn [yn contract]
-                            (let [price (:price contract)
-                                  odds (/ 1 price)
-                                  wager (:wager contract)
-                                  winner? (or
-                                            (and (< wager 0)
-                                                 (= yn :no))
-                                            (and (>= wager 0)
-                                                 (= yn :yes)))]
-                                (if winner?
-                                    (* wager odds)
-                                    (* -1 wager))))
-           no-sum (->> contract-positions
-                       (map (partial contract-value :no))
-                       (reduce +))
-           total-wagered (reduce + (map :wager contract-positions))]
-        (->> contract-positions
-             (map
-                (fn [pos]
-                    (let [p (:prob pos)
-                          xn (+
-                                (contract-value :yes pos)
-                                no-sum
-                                (* -1 (contract-value :no pos)))
-                          b (if (< (java.lang.Math/abs total-wagered) 0.000001)
-                                0.0
-                                (/ xn total-wagered))]
-                    (* p (java.lang.Math/log (+ 1 b))))))
-             (reduce +)
-             (#(do (println %) %)))))
-
-(defn odds [pos result]
+(defn- odds [pos result]
     (cond
         (and (= result :yes) (>= (:wager pos) 0)) (/ 1 (:price pos))
         (and (= result :no)  (>= (:wager pos) 0)) -1
-        (and (= result :yes) (< (:wager pos)  0)) -1
+        (and (= result :yes) (< (:wager pos)  0)) 1
         (and (= result :no)  (< (:wager pos)  0)) (/ 1 (- 1 (:price pos)))))
 
-; TODO: deal with no bets correctly
-(defn growth-rate [contract-positions]
-    (->> contract-positions
-         (reduce
-            (fn [sum pos]
-                (+ sum
-                   (* (:prob pos)
-                      (java.lang.Math/log (+ 1 (* (odds pos :yes) (:wager pos)))))
-                   (* (- 1 (:prob pos))
-                      (java.lang.Math/log (+ 1 (* (odds pos :no) (:wager pos)))))))
-            0.0)))
+(defn- wager-result [pos result]
+    (let [{:keys [wager prob price]} pos
+          b (odds pos result)
+          bet-no? (< prob price) ; TODO: would prefer to generate endogenously from the optimization but can't quite make that work
+          result-prob (if (= result :yes)
+                          prob
+                          (- 1 prob))]
+        (if bet-no?
+            (wager-result
+                {:prob (- 1 prob)
+                 :wager (* -1 wager)
+                 :price (- 1 price)}
+                (if (= result :yes) :no :yes))
+            (* result-prob
+               (java.lang.Math/log (+ 1 (* b wager )))))))
+
+(defn- growth-for-pos [pos]
+    (let [yes-prob (:prob pos)
+          no-prob (- 1 yes-prob)]
+        (+ (wager-result pos :yes)
+           (wager-result pos :no))))
+
+(defn- growth-rate [contract-positions]
+    ; This is adapted from Thorpe's discussion of the Kelly Criterion
+    ; http://www.eecs.harvard.edu/cs286r/courses/fall12/papers/Thorpe_KellyCriterion2007.pdf
+    (reduce
+        (fn [sum pos] (+ sum (growth-for-pos pos)))
+        0.0
+        contract-positions))
 
 (defn get-optimal-bets [contracts-price-and-prob]
     (let [f (reify MultivariateFunction
