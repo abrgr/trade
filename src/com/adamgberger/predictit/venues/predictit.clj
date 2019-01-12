@@ -35,6 +35,7 @@
     (let [portfolio (api/get-positions (:auth venue))
           adapt-contract (fn [c]
                             {:contract-id (:contractId c)
+                             :tradable? (and (:contractIsOpen c) (:contractIsActive c))
                              :side (-> c
                                        :userPrediction
                                        side-by-trade-type
