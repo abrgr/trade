@@ -6,6 +6,8 @@
             [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
 
+(def id ::id)
+
 (defn parse-result [html cb]
     (let [p (-> html
                 m/parse

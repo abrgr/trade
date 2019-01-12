@@ -7,9 +7,11 @@
             [hickory.select :as sel])
   (:gen-class))
 
+(def id ::id)
+
 (defn- parse-spreadsheet [csv cb]
     (let [data (csv/read-csv csv)
-          date (u/parse-human-date-within (-> data first first))
+          date (u/parse-human-date-range-within (-> data first first))
           line-pairs (partition 2 1 data) ; [[1st-line 2nd-line] [2nd-line 3rd line] ...]
           approval (some->> line-pairs
                             (filter (fn [[l1 _]] (= "NET APPROVE" (nth l1 1))))
@@ -20,7 +22,7 @@
                             (#(.replace % "%" ""))
                             Integer/parseInt)]
         (cb {:val approval
-             :date date})))
+             :date (:end-date date)})))
 
 (defn- check-google-sheet [html cb]
     (let [regex #"https://docs.google.com/spreadsheets/[^\"?]+"

@@ -4,6 +4,8 @@
             [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
 
+(def id ::id)
+
 (defn parse-registered-approval-from-econtabs
     "Parses a document like https://d25d2506sfb94s.cloudfront.net/cumulus_uploads/document/f0al8raalq/econTabReport.pdf
      to get the likely voters job approval for president trump as used in the RCP aggregate."

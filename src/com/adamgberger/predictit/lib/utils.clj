@@ -120,6 +120,25 @@
         (str month " " day " " year)
         (java.time.format.DateTimeFormatter/ofPattern "MMMM d y")))))
 
+(defn most-recent-month-day
+  [month day]
+  (let [today (java.time.LocalDate/now)
+        year (-> today
+                 (.get (java.time.temporal.ChronoField/YEAR)))
+        md-this-year (java.time.LocalDate/of year month day)]
+    (if (> (compare md-this-year today) 0)
+      (java.time.LocalDate/of (dec year) month day)
+      md-this-year)))
+
+(defn parse-historical-month-day-range
+  "E.x. 1/10 - 1/15"
+  [s]
+  (let [[from to] (clojure.string/split s #"\s*[-]\s*")
+        [from-mon from-day] (map #(Integer/parseInt %) (clojure.string/split from #"/"))
+        [to-mon to-day] (map #(Integer/parseInt %) (clojure.string/split to #"/"))]
+    {:from (most-recent-month-day from-mon from-day)
+     :to (most-recent-month-day to-mon to-day)}))
+
 (defn truncated-to-day
   [d]
   (.truncatedTo d java.time.temporal.ChronoUnit/DAYS))

@@ -4,6 +4,8 @@
             [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
 
+(def id ::id)
+
 (defn parse-total-approval-from-trumptweets
     "Parses a document like https://d25d2506sfb94s.cloudfront.net/cumulus_uploads/document/5wkq01w96u/tabs_Trump_Tweets_20190106.pdf
      to get the total job approval for president trump as used in the 538 aggregate."
