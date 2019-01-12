@@ -5,7 +5,7 @@
   (:gen-class))
 
 (def venue-id :com.adamgberger.predictit.venues.predictit/predictit)
-(def rcp-input-id :com.adamgberger.predictit.inputs.approval-rating-rcp/id)
+(def rcp-estimate-id :com.adamgberger.predictit.estimators.approval-rating-rcp/id)
 
 (def math-ctx (java.math.MathContext. 1 java.math.RoundingMode/HALF_UP))
 
@@ -162,7 +162,7 @@
 
 (defn update-probs [state strat-state end-chan]
     (l/log :info "Updating RCP probabilities")
-    (let [approval (-> @(:inputs state) rcp-input-id :current :approval)
+    (let [approval (-> @(:estimates state) rcp-estimate-id :val)
           tradable-mkts (:tradable-mkts @strat-state)
           dist-by-days (:dist-by-days @strat-state)
           prob-dist (when (and (some? tradable-mkts)
@@ -179,10 +179,12 @@
                         java.time.temporal.ChronoUnit/MINUTES
                         (java.time.ZonedDateTime/now)
                         end-time)
-          mins-since-latest-major-input-change (.between
-                                                java.time.temporal.ChronoUnit/MINUTES
-                                                latest-major-input-change
-                                                (java.time.Instant/now))
+          mins-since-latest-major-input-change (if (nil? latest-major-input-change)
+                                                1000
+                                                (.between
+                                                    java.time.temporal.ChronoUnit/MINUTES
+                                                    latest-major-input-change
+                                                    (java.time.Instant/now)))
           cur-winner? (and (>= cur (get-in ctrct [:bounds :lower-inclusive]))
                            (<= cur (get-in ctrct [:bounds :upper-inclusive])))
           adj-p  (cond
@@ -200,28 +202,31 @@
                     :else :normal)}))
 
 (defn update-trades [state strat-state end-chan]
-    (let [ss @strat-state
-          prob-dist (:prob-dist ss)
-          mkts (:tradable-mkts ss)
-          latest-major-input-change (:latest-major-input-change ss)
-          cur (get-in @(get-in state [:inputs rcp-input-id]) [:current :approval])
-          order-books (get-in @(:venue-state state) [venue-id :order-books])
-          get-ctrct (fn [mkt ctrct-id]
-                        (->> (:contracts mkt)
-                             (filter #(= (:contract-id %) ctrct-id)
-                             first)))
-          trades-for-ctrct (fn [mkt [ctrct-id p]]
-                            [ctrct-id (trade-by-prob (:end-date mkt) (get-ctrct mkt ctrct-id) cur latest-major-input-change p)])
-          get-mkt (fn [mkt-id]
-                    (->> mkts
-                         (filter #(= (:market-id %) mkt-id))
-                         first))
-          trades-for-mkt (fn [[mkt-id p-by-ctrct]]
-                            [mkt-id (trades-for-ctrct (get-mkt mkt-id) p-by-ctrct)])
-          trades (->> prob-dist
-                      (map trades-for-mkt)
-                      (into {}))]
-        (send (:venue-state state) #(assoc-in % [venue-id :req-pos ::id] trades))))
+    (l/with-log :info "Updating trades"
+        (let [ss @strat-state
+            prob-dist (:prob-dist ss)
+            mkts (:tradable-mkts ss)
+            latest-major-input-change (:latest-major-input-change ss)
+            cur (get-in @(:estimates state) [rcp-estimate-id :val])
+            order-books (get-in @(:venue-state state) [venue-id :order-books])
+            get-ctrct (fn [mkt ctrct-id]
+                            (->> (:contracts mkt)
+                                (filter #(= (:contract-id %) ctrct-id))
+                                first))
+            trades-for-ctrct (fn [mkt ctrct-id p]
+                                [ctrct-id (trade-by-prob (:end-date mkt) (get-ctrct mkt ctrct-id) cur latest-major-input-change p)])
+            get-mkt (fn [mkt-id]
+                        (->> mkts
+                            (filter #(= (:market-id %) mkt-id))
+                            first))
+            trades-for-mkt (fn [[mkt-id p-by-ctrct]]
+                                [mkt-id (->> p-by-ctrct
+                                             (map #(trades-for-ctrct (get-mkt mkt-id) (first %) (second %)))
+                                             (into {})])
+            trades (->> prob-dist
+                        (map trades-for-mkt)
+                        (into {}))]
+            (send (:venue-state state) #(assoc-in % [venue-id :req-pos ::id] trades)))))
 
 (defn maintain-trades [state strat-state end-chan]
     ; TODO: also tick update-trades more frequently as we near the end of the market
@@ -232,13 +237,13 @@
                      (not= old new)))]
         (utils/add-guarded-watch-in
             strat-state
-            ::maintain-trades
+            ::maintain-trades-prob
             [:prob-dist]
             valid?
             upd)
         (utils/add-guarded-watch-in
             strat-state
-            ::maintain-trades
+            ::maintain-trades-major-changes
             [:latest-major-input-change]
             valid?
             upd)))
@@ -251,9 +256,9 @@
                 (and (some? new)
                      (not= old new)))]
         (utils/add-guarded-watch-in
-            (:inputs state)
+            (:estimates state)
             ::maintain-probs
-            [rcp-input-id :current :approval]
+            [rcp-estimate-id :val]
             valid?
             upd)
         (utils/add-guarded-watch-in
@@ -284,9 +289,9 @@
                      (and (some? old)
                            (not= (.round old math-ctx) (.round new math-ctx)))))]
         (utils/add-guarded-watch-in
-            (:inputs state)
-            ::maintain-probs
-            [rcp-input-id :current :approval]
+            (:estimates state)
+            ::maintain-major-input-changes
+            [rcp-estimate-id :val]
             valid?
             upd)))
 
@@ -302,5 +307,6 @@
           (maintain-order-books state strat-state end-chan)
           (maintain-local-markets state strat-state end-chan)
           (maintain-probs state strat-state end-chan)
+          (maintain-trades state strat-state end-chan)
           (maintain-major-input-changes state strat-state end-chan)
           {::state strat-state}))

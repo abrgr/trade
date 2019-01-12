@@ -5,7 +5,8 @@
             [com.adamgberger.predictit.venues :as vs]
             [com.adamgberger.predictit.venues.venue :as v]
             [com.adamgberger.predictit.strategies :as strats]
-            [com.adamgberger.predictit.inputs :as inputs])
+            [com.adamgberger.predictit.inputs :as inputs]
+            [com.adamgberger.predictit.estimators :as estimators])
   (:gen-class))
 
 (defn get-available-markets-chan [venue]
@@ -121,7 +122,7 @@
 (defn monitor-order-book [state end-chan venue-id market-id contract-id order-book-updates]
   (async/go-loop []
     (update-order-book state venue-id market-id contract-id (first order-book-updates))
-    (let [interval 10000
+    (let [interval 30000
           keep-going? (async/alt!
                         end-chan false
                         (async/timeout interval) true)]
@@ -171,12 +172,14 @@
   (let [state {:venues (map #(% (:creds cfg)) (vs/venue-makers))
                :venue-state (l/logging-agent "venue-state" (agent {}))
                :strats {}
-               :inputs (l/logging-agent "inputs" (agent {}))}
+               :inputs (l/logging-agent "inputs" (agent {}))
+               :estimates (l/logging-agent "estimates" (agent {}))}
         state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))]
     (maintain-markets state end-chan)
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
     (maintain-order-books state end-chan)
+    (estimators/start-all state end-chan)
     (inputs/start-all state end-chan)
     (state-watchdog state end-chan)
     (async/<!! end-chan)))

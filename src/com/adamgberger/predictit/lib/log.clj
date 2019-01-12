@@ -5,7 +5,7 @@
 (def log-chan (async/chan 100))
 
 (async/go-loop []
-    (println (async/<! log-chan))
+    (println (pr-str (async/<! log-chan)))
     (recur))
 
 (defn log 

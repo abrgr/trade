@@ -173,9 +173,10 @@
   (async/go-loop []
     (f)
     (let [interval (if (number? interval-ms) interval-ms (interval-ms))
+          jittered-interval (Math/floor (+ interval (* 0.2 interval (rand))))
           keep-going? (async/alt!
                         end-chan false
-                        (async/timeout interval) true)]
+                        (async/timeout jittered-interval) true)]
       (if keep-going?
         (recur)
         (done)))))
@@ -185,4 +186,11 @@
                 (let [new-v (get-in new keypath)
                       old-v (get-in old keypath)]
                     (when (guard old-v new-v) (f new-v))))]
+        (add-watch agt id w)))
+
+(defn add-guarded-watch-ins [agt id keypaths guard f]
+    (letfn [(w [_ _ old new]
+                (let [new-vs (map (partial get-in new) keypaths)
+                      old-vs (map (partial get-in old) keypaths)]
+                    (when (guard old-vs new-vs) (f new-vs))))]
         (add-watch agt id w)))

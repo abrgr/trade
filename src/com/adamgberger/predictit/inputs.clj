@@ -2,7 +2,7 @@
   (:require [com.adamgberger.predictit.lib.utils :as utils]
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.inputs.approval-rating-rcp :as approval-rcp]
-            [com.adamgberger.predictit.inputs.approval-rating-538:as approval-538]
+            [com.adamgberger.predictit.inputs.approval-rating-538 :as approval-538]
             [com.adamgberger.predictit.inputs.harris-interactive :as approval-harris-interactive]
             [com.adamgberger.predictit.inputs.rasmussen :as approval-rasmussen]
             [com.adamgberger.predictit.inputs.yougov-weekly-registered :as approval-yougov-weekly-registered])
