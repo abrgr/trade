@@ -1,7 +1,9 @@
 (ns com.adamgberger.predictit.strategies.approval-rating-rcp
   (:require [clojure.core.async :as async]
             [com.adamgberger.predictit.lib.log :as l]
-            [com.adamgberger.predictit.lib.utils :as utils])
+            [com.adamgberger.predictit.lib.utils :as utils]
+            [com.adamgberger.predictit.lib.multi-contract-portfolio-utils :as port-opt-utils]
+            [com.adamgberger.predictit.lib.execution-utils :as execution-utils])
   (:gen-class))
 
 (def venue-id :com.adamgberger.predictit.venues.predictit/predictit)
@@ -171,20 +173,31 @@
         (when (some? prob-dist)
             (send strat-state #(assoc % :prob-dist prob-dist)))))
 
-(defn trade-by-prob [end-date ctrct cur latest-major-input-change p]
+(defn market-time-info [end-date latest-major-input-change]
     (let [end-time (-> end-date
-                       (.atTime 12 0) ; TODO: get this from the market
+                       (.atTime 23 59) ; TODO: get this from the market
                        (.atZone (java.time.ZoneId/of "America/New_York")))
           mins-left (.between
                         java.time.temporal.ChronoUnit/MINUTES
                         (java.time.ZonedDateTime/now)
                         end-time)
           mins-since-latest-major-input-change (if (nil? latest-major-input-change)
-                                                1000
+                                                300
                                                 (.between
                                                     java.time.temporal.ChronoUnit/MINUTES
                                                     latest-major-input-change
                                                     (java.time.Instant/now)))
+          fill-mins (cond
+                        (< mins-left 180) 10.0
+                        (< mins-since-latest-major-input-change 10) 1.0
+                        :else 120.0)]
+        {:end-time end-time
+         :mins-left mins-left
+         :mins-since-latest-major-input-change mins-since-latest-major-input-change
+         :fill-mins fill-mins}))
+
+(defn target-prob [ctrct time-info cur latest-major-input-change p]
+    (let [{:keys [mins-left]} time-info
           cur-winner? (and (>= cur (get-in ctrct [:bounds :lower-inclusive]))
                            (<= cur (get-in ctrct [:bounds :upper-inclusive])))
           adj-p  (cond
@@ -192,40 +205,58 @@
                     (and (< mins-left 180) cur-winner?) 1
                     ; TODO: add some decay towards the end
                     :else p)]
-        {:type :target-prob
-         :target adj-p
-         :confidence confidence
-         :max-stake-pct (utils/to-decimal "0.5")
-         :urgency (cond
-                    (< mins-left 180) :immediate
-                    (< mins-since-latest-major-input-change 10) :immediate
-                    :else :normal)}))
+        adj-p))
+
+(defn get-contract [mkt contract-id]
+    (->> mkt
+         :contracts
+         (filter #(= (:contract-id %) contract-id))
+         first))
+
+(defn trades-for-mkt [mkt latest-major-input-change cur order-books-by-contract-id prob-by-contract-id]
+    (let [time-info (market-time-info (:end-date mkt) latest-major-input-change)
+          {:keys [fill-mins]} time-info
+          price-and-prob-for-contract (fn [[contract-id prob]]
+                                        (let [contract (get-contract mkt contract-id)
+                                              order-book (get order-books-by-contract-id contract-id)
+                                              adj-p (target-prob contract time-info cur latest-major-input-change prob)
+                                              likely-fill (execution-utils/get-likely-fill fill-mins adj-p order-book)]
+                                            (when (some? likely-fill)
+                                                {:prob (if (= (:trade-type likely-fill) :buy-no)
+                                                           (- 1 adj-p)
+                                                           adj-p)
+                                                 :fill-mins fill-mins
+                                                 :trade-type (:trade-type likely-fill)
+                                                 :price (:price likely-fill)
+                                                 :contract-id contract-id})))
+          contracts-price-and-prob  (->> prob-by-contract-id
+                                         (map price-and-prob-for-contract)
+                                         (filter some?)
+                                         (into []))]
+        (port-opt-utils/get-optimal-bets contracts-price-and-prob)))
 
 (defn update-trades [state strat-state end-chan]
     (l/with-log :info "Updating trades"
         (let [ss @strat-state
-            prob-dist (:prob-dist ss)
-            mkts (:tradable-mkts ss)
-            latest-major-input-change (:latest-major-input-change ss)
-            cur (get-in @(:estimates state) [rcp-estimate-id :val])
-            order-books (get-in @(:venue-state state) [venue-id :order-books])
-            get-ctrct (fn [mkt ctrct-id]
-                            (->> (:contracts mkt)
-                                (filter #(= (:contract-id %) ctrct-id))
-                                first))
-            trades-for-ctrct (fn [mkt ctrct-id p]
-                                [ctrct-id (trade-by-prob (:end-date mkt) (get-ctrct mkt ctrct-id) cur latest-major-input-change p)])
-            get-mkt (fn [mkt-id]
-                        (->> mkts
-                            (filter #(= (:market-id %) mkt-id))
-                            first))
-            trades-for-mkt (fn [[mkt-id p-by-ctrct]]
-                                [mkt-id (->> p-by-ctrct
-                                             (map #(trades-for-ctrct (get-mkt mkt-id) (first %) (second %)))
-                                             (into {})])
-            trades (->> prob-dist
-                        (map trades-for-mkt)
-                        (into {}))]
+              prob-dist (:prob-dist ss)
+              mkts (:tradable-mkts ss)
+              latest-major-input-change (:latest-major-input-change ss)
+              cur (get-in @(:estimates state) [rcp-estimate-id :val])
+              order-books (get-in @(:venue-state state) [venue-id :order-books])
+              get-mkt (fn [mkt-id]
+                          (->> mkts
+                              (filter #(= (:market-id %) mkt-id))
+                              first))
+              get-trades-for-market (fn [[mkt-id p-by-ctrct]]
+                                        {mkt-id (trades-for-mkt
+                                                    (get-mkt mkt-id)
+                                                    latest-major-input-change
+                                                    cur
+                                                    (get order-books mkt-id)
+                                                    p-by-ctrct)})
+              trades (->> prob-dist
+                          (map get-trades-for-market)
+                          (apply merge))]
             (send (:venue-state state) #(assoc-in % [venue-id :req-pos ::id] trades)))))
 
 (defn maintain-trades [state strat-state end-chan]
@@ -235,6 +266,12 @@
             (valid? [old new]
                 (and (some? new)
                      (not= old new)))]
+        (utils/add-guarded-watch-in
+            (:venue-state state)
+            ::maintain-trades
+            [venue-id :order-books]
+            not=
+            upd)
         (utils/add-guarded-watch-in
             strat-state
             ::maintain-trades-prob

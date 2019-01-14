@@ -100,10 +100,11 @@
                                              :contract-id contract-id})
   (send
     (:venue-state state)
-    #(assoc-in
-      %
-      [venue-id :order-books market-id contract-id]
-      val)))
+    #(let [last-price (get-in % [venue-id :contracts market-id contract-id :last-price])]
+      (assoc-in
+        %
+        [venue-id :order-books market-id contract-id]
+        (merge {:last-price last-price} val)))))
 
 (defn all-order-book-reqs [venue-state venue-id]
   (->> (get-in venue-state [venue-id :req-order-books])
@@ -111,7 +112,7 @@
        (apply concat)
        (into #{})))
 
-(defn continue-monitoring-order-book [state venue-id market-id contract-id]
+(defn continue-monitoring-order-book [state venue-id market-id]
   (let [venue-state @(:venue-state state)
         req-books (all-order-book-reqs venue-state venue-id)]
     (->> req-books
@@ -126,22 +127,45 @@
           keep-going? (async/alt!
                         end-chan false
                         (async/timeout interval) true)]
-      (if (and (continue-monitoring-order-book state venue-id market-id contract-id)
+      (if (and (continue-monitoring-order-book state venue-id market-id)
                keep-going?)
         (recur)
         (l/log :warn "Stopping order book monitor" {:market-id market-id
                                                     :contract-id contract-id})))))
 
-(defn maintain-order-book [state end-chan venue-id venue req]
-  (l/log :info "Starting watch of order book" {:venue-id venue-id
-                                               :req req})
-  (let [{:keys [market-id market-url]} req
+(defn update-contracts [state venue-id market-id market-url]
+  (let [venue (->> state
+                    :venues
+                    (filter #(= venue-id (v/id %)))
+                    first)
         contracts (v/contracts venue market-id market-url)]
     (doseq [contract contracts]
       (let [contract-id (:contract-id contract)]
         (send
           (:venue-state state)
-          #(assoc-in % [venue-id :contracts market-id contract-id] contract))
+          #(assoc-in % [venue-id :contracts market-id contract-id] contract))))
+    contracts))
+
+(defn monitor-market-contracts [state end-chan venue-id market-id market-url]
+  (async/go-loop []
+    (update-contracts state venue-id market-id market-url)
+    (let [interval 30000
+          keep-going? (async/alt!
+                        end-chan false
+                        (async/timeout interval) true)]
+      (if (and (continue-monitoring-order-book state venue-id market-id)
+               keep-going?)
+        (recur)
+        (l/log :warn "Stopping market contracts monitor" {:market-id market-id})))))
+
+(defn maintain-order-book [state end-chan venue-id venue req]
+  (l/log :info "Starting watch of order book" {:venue-id venue-id
+                                               :req req})
+  (let [{:keys [market-id market-url]} req
+        contracts (update-contracts state venue-id market-id market-url)]
+    (monitor-market-contracts state end-chan venue-id market-id market-url)
+    (doseq [contract contracts]
+      (let [contract-id (:contract-id contract)]
         (->> (v/monitor-order-book
               venue
               market-id

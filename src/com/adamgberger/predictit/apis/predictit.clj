@@ -55,7 +55,7 @@
             (h/get url merged-opts))))
 
 (defn from-page [page]
-    (http-get page) ; try to emulate a browser
+    ; (http-get page) ; try to emulate a browser
     {"Referrer" (predictit-site-url "/dashboard")})
 
 (defn with-auth [auth]

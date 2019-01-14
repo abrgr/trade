@@ -59,7 +59,44 @@
 
 (defn- -monitor-order-book
     [venue market-id full-market-url contract-id]
-    (api/monitor-order-book (:auth venue) market-id full-market-url contract-id))
+    (letfn [(adapt-order-book [{:keys [order-book]}]
+                {:yes {:buy (->> (:yesOrders order-book)
+                                 (map
+                                    (fn [{:keys [contractId costPerShareYes quantity]}]
+                                        {:contract-id contractId
+                                         :price costPerShareYes
+                                         :qty quantity}))
+                                 (sort-by :price)
+                                 (into []))
+                       :sell (->> (:noOrders order-book)
+                                  (map
+                                    (fn [{:keys [contractId costPerShareYes quantity]}]
+                                        {:contract-id contractId
+                                        :price costPerShareYes
+                                        :qty quantity}))
+                                  (sort-by :price)
+                                  reverse
+                                  (into []))}
+                 :no {:buy (->> (:noOrders order-book)
+                                (map
+                                    (fn [{:keys [contractId costPerShareNo quantity]}]
+                                        {:contract-id contractId
+                                        :price costPerShareNo
+                                        :qty quantity}))
+                                (sort-by :price)
+                                (into []))
+                      :sell (->> (:yesOrders order-book)
+                                 (map
+                                    (fn [{:keys [contractId costPerShareNo quantity]}]
+                                        {:contract-id contractId
+                                        :price costPerShareNo
+                                        :qty quantity}))
+                                 (sort-by :price)
+                                 reverse
+                                 (into []))}})]
+        (map
+            adapt-order-book
+            (api/monitor-order-book (:auth venue) market-id full-market-url contract-id))))
 
 (defn- -contracts
     [venue market-id full-market-url]
@@ -70,7 +107,8 @@
                              :date-opened (:dateOpened c)
                              :is-active (:isActive c)
                              :is-open (:isOpen c)
-                             :is-trading-suspended (:isTradingSuspended c)})]
+                             :is-trading-suspended (:isTradingSuspended c)
+                             :last-price (:lastTradePrice c)})]
         (->> resp
              :contracts
              (map adapt-contract)

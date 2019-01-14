@@ -27,12 +27,17 @@
         (cb {:val (Integer/parseInt approval)
              :date date})))
 
+(def weekend-days? #{6 7})
+
 (defn get-current [cb]
-    (let [date (-> (java.time.LocalDate/now)
+    (let [today (java.time.ZonedDateTime/now (java.time.ZoneId/of "America/New_York"))
+          date (-> today
                    (.format (java.time.format.DateTimeFormatter/ofPattern "MMMdd"))
                    (.toLowerCase))]
-        (h/get
-            (str "http://www.rasmussenreports.com/public_content/politics/trump_administration/prez_track_" date)
-            {:async? true}
-            #(parse-result (:body %) cb)
-            #(l/log :error "Failed to get rasmussen report" (l/ex-log-msg %)))))
+        ; rasmussen doesn't come out on weekends
+        (when-not (weekend-days? (.get today java.time.temporal.ChronoField/DAY_OF_WEEK))
+            (h/get
+                (str "http://www.rasmussenreports.com/public_content/politics/trump_administration/prez_track_" date)
+                {:async? true}
+                #(parse-result (:body %) cb)
+                #(l/log :error "Failed to get rasmussen report" (l/ex-log-msg %))))))
