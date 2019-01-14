@@ -43,6 +43,7 @@
                                        (.contains "yes")
                                        (if :yes :no))
                              :qty (:userQuantity c)
+                             :avg-price-paid (:userAveragePricePerShare c)
                              :orders {
                                  :buy (:userOpenOrdersBuyQuantity c)
                                  :sell (:userOpenOrdersSellQuantity c)}})
