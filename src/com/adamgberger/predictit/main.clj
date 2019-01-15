@@ -198,15 +198,23 @@
        (map #(* (:qty %) (:avg-price-paid %)))
        (reduce + 0.0)))
 
+(defn mkt-ids-for-strat [venue-state strat-id]
+  (->> venue-state
+       :req-order-books
+       strat-id
+       (map :market-id)
+       (into #{})))
+
+(defn contract-ids-for-strat [venue-state strat-id]
+  (->> (mkt-ids-for-strat venue-state strat-id)
+       (map #(get-in venue-state [:contracts %]))
+       (mapcat keys)))
+
 (defn strat-bankroll [venue-state cfg strat-id venue-id]
   (let [bal (:bal venue-state)
         pos (:pos venue-state)
-        allocation (get-in cfg :allocations strat-id)
-        mkts (->> venue-state
-                  :req-order-books
-                  strat-id
-                  (map :market-id)
-                  (into #{}))
+        allocation (get-in cfg [:allocations strat-id])
+        mkts (mkt-ids-for-strat venue-state strat-id)
         relevant-pos (filter #(mkts (:market-id %))) ; TODO: making a silly assumption that strat:market is 1:1
         strat-pos-investment (orig-investment relevant-pos)
         all-pos-investment (orig-investment pos)
@@ -214,22 +222,51 @@
         desired (* total-val allocation)]
     {:desired desired
      :current strat-pos-investment
-     :cash (max 0.0 (- desired stat-pos-investment))}))
+     :cash (max 0.0 (- desired strat-pos-investment))}))
 
-(defn outstanding-orders-for-strat [venue-state strat-id]
-  (->> venue-state
-       :pos
-       (mapcat :contracts)
-       (map (fn [c] [(:contract-id c) (:orders c)]))
-       (into {})))
+(defn get-orders [state venue-id venue-state mkt-id]
+  (let [venue (->> state
+                   :venues
+                   (filter #(= (v/id %) venue-id))
+                   first)
+        contract-ids (->> venue-state
+                          :contracts
+                          mkt-id
+                          keys)
+        mkt-name (->> venue-state
+                      :mkts
+                      (filter #(= (:market-id %) mkt-id))
+                      first
+                      :market-name)
+        orders-by-contract-id (->> contract-ids
+                                   (map
+                                     (fn [contract-id]
+                                       [contract-id (v/orders venue mkt-id mkt-name contract-id)]))
+                                   (into {}))]
+    (send (:venue-state state) #(assoc-in % [:orders mkt-id] orders-by-contract-id))
+    orders-by-contract-id))
+
+(defn outstanding-orders-for-strat [state venue-id venue-state strat-id]
+  (let [{:keys [outstanding-orders]} venue-state
+        mkt-ids (mkt-ids-for-strat venue-state strat-id)
+        orders-by-mkt-id (map
+                          (fn [mkt-id] [mkt-id (get-in venue-state [:orders mkt-id])])
+                          mkt-ids)]
+    (->> orders-by-mkt-id
+         (map
+          (fn [[mkt-id orders]]
+            [mkt-id
+             (if (nil? orders)
+                (get-orders state venue-id venue-state mkt-id)
+                orders)])))))
 
 (defn desired-pos-for-req-pos [bankroll req-pos]
   {:contract-id (:contract-id req-pos)
    :target-price (:prob req-pos)
    :target-mins (:fill-mins req-pos)
    :trade-type (:trade-type req-pos)
-   :price (:price pos)
-   :shares (Math/floor (/ (* (:desired bankroll) (:weight pos)) (:price pos)))})
+   :price (:price req-pos)
+   :shares (Math/floor (/ (* (:desired bankroll) (:weight req-pos)) (:price req-pos)))})
 
 (def side-for-trade-type
   {:buy-yes :yes
@@ -270,10 +307,11 @@
                   current-side (:side current)
                   current-qty (:qty current)
                   sell-current (sell-trade-type-for-side current-side)
-                  ords-by-trade-type (orders-by-trade-type orders)]
-              (flatten
+                  ords-by-trade-type (orders-by-trade-type orders)
+                  current-holding (* current-qty (:avg-price-paid current))]
+              (filter some? (flatten
                 [; we hold something we don't want; sell it
-                 (when (and (> qty 0)
+                 (when (and (> current-qty 0)
                              (not= desired-side current-side))
                      {:trade-type sell-current
                      :qty current-qty
@@ -283,48 +321,71 @@
                        ords-to-cancel (opp-buy ords-by-trade-type)]
                      (when-not (empty? ords-to-cancel)
                        (map
-                         {:trade-type :cancel
-                         :order-id (:order-id %)}
-                         ords-to-cancel)))
+                          (fn [ord]
+                            {:trade-type :cancel
+                             :order-id (:order-id ord)})
+                          ords-to-cancel)))
                  ; we have sell orders out for the wrong side; cancel them
                  (let [desired-side-sell (-> desired-side sell-trade-type-for-side)
                        ords-to-cancel (desired-side-sell ords-by-trade-type)]
                      (when-not (empty? ords-to-cancel)
                        (map
-                         {:trade-type :cancel
-                         :order-id (:order-id %)}
-                         ords-to-cancel)))
+                          (fn [ord]
+                            {:trade-type :cancel
+                             :order-id (:order-id ord)})
+                          ords-to-cancel)))
                  ; we want to buy
-                 (let [cur-ords (-> desired-pos :trade-type ords-by-trade-type)
-                       ord-qty (->> cur-ords
-                                     (map :qty)
-                                     (reduce + 0))
+                 (let [desired-price (:price desired-pos)
+                       still-valid-order? #(< (Math/abs (- (:price %) desired-price)) 0.05)
+                       cur-ords (-> desired-pos
+                                    :trade-type
+                                    ords-by-trade-type)
+                       ords (->> cur-ords
+                                 (filter still-valid-order?))
+                       ords-to-cancel (->> cur-ords
+                                           (filter (comp not still-valid-order?)))
+                       ord-qty (->> ords
+                                    (map :qty)
+                                    (reduce + 0))
                        cur-qty (if (= desired-side current-side)
                                    current-qty
                                    0)
-                       remaining-qty (- (:qty desired-pos) cur-qty ord-qty)]
-                   (when (> remaining-qty 0)
-                     {:trade-type (:trade-type desired-pos)
-                       :qty remaining-qty
-                       :price (:price desired-pos)}))]))))))
+                       ord-amt (->> ords
+                                    (reduce #(+ %1 (* (:price %2) (:qty %2))) 0.0))
+                       cur-amt (+ current-holding ord-amt)
+                       max-qty (/ (- 850.0 cur-amt) desired-price)
+                       remaining-qty (min max-qty (- (:qty desired-pos) cur-qty ord-qty))]
+                    (concat
+                      ; our buy order
+                      [(when (> remaining-qty 0)
+                        {:trade-type (:trade-type desired-pos)
+                         :qty remaining-qty
+                         :price (:price desired-pos)})]
+                      ; canceling our old orders with bad prices
+                      (map
+                        (fn [ord]
+                          {:trade-type :cancel
+                           :order-id (:order-id ord)})
+                        ords-to-cancel)))])))))))
 
 (defn execute-trades [state end-chan venue-id req-pos-by-strat-id]
-  (let [venue-state @(:venue-state state)
-        {:keys [cfg]} state]
-    (doseq [[strat-id req-positions] trades-by-strat-id]
-      (let [bankroll (strat-bankroll venue-state cfg strat-id venue-id)
-            outstanding-orders-by-contract-id (outstanding-orders-for-strat venue-state strat-id) ; TODO: keep track of orders we expect or we can only trade after getting position updates
-            desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
-            pos-by-contract-id (->> desired-pos
-                                    (mapcat :contracts)
-                                    (reduce
-                                      (fn [by-id c]
-                                        (assoc by-id (:contract-id c) c))
-                                      {}))
-            orders-by-contract-id nil ; TODO: get our orders
-            trades (adjust-desired-pos-for-actuals pos-by-contract-id orders-by-contract-id)])
-        ; TODO: execute these trades
-        trades)))
+  (l/with-log :info "Executing trades"
+    (let [venue-state @(:venue-state state)
+          {:keys [cfg]} state]
+      (doseq [[strat-id req-positions] req-pos-by-strat-id]
+        (let [bankroll (strat-bankroll venue-state cfg strat-id venue-id)
+              outstanding-orders-by-contract-id (outstanding-orders-for-strat state venue-id venue-state strat-id)
+              desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
+              pos-by-contract-id (->> (:pos venue-state)
+                                      (mapcat :contracts)
+                                      (reduce
+                                        (fn [by-id c]
+                                          (assoc by-id (:contract-id c) c))
+                                        {}))
+              trades (adjust-desired-pos-for-actuals desired-pos pos-by-contract-id outstanding-orders-by-contract-id)]
+          ; TODO: keep track of orders we expect
+          ; TODO: execute these trades
+          (l/log :info "Trades" {:trades trades}))))))
 
 (defn run-executor [state end-chan]
   (let [venue-id (-> state :venues first v/id)]
@@ -336,7 +397,9 @@
         (partial execute-trades state end-chan venue-id))))
 
 (defn run-trading [cfg end-chan]
-  (let [state {:venues (map #(% (:creds cfg)) (vs/venue-makers))
+  (let [state {:venues (->> (vs/venue-makers)
+                            (map #(% (:creds cfg)))
+                            (into []))
                :cfg (->> cfg
                          (filter #(not= (first %) :creds))
                          (into {}))
@@ -345,6 +408,7 @@
                :inputs (l/logging-agent "inputs" (agent {}))
                :estimates (l/logging-agent "estimates" (agent {}))}
         state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))]
+    (run-executor state end-chan)
     (maintain-markets state end-chan)
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
