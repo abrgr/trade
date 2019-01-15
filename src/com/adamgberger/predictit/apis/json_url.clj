@@ -1,12 +1,13 @@
 (ns com.adamgberger.predictit.apis.json-url
   (:require [clj-http.client :as h]
+            [clj-http.conn-mgr :as conn-mgr]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.lib.utils :as utils])
   (:gen-class))
 
-(def cm (clj-http.conn-mgr/make-reusable-conn-manager {:timeout 10 :threads 20}))
+(def cm (conn-mgr/make-reusable-conn-manager {:timeout 10 :threads 20}))
 
 (defn get-json 
     ([browser-url url value-fns]

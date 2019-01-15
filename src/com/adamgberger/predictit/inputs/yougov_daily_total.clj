@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.inputs.yougov-daily-total
-  (:require [clj-http.client :as h]
+  (:require [clojure.string : as string]
+            [clj-http.client :as h]
             [com.adamgberger.predictit.lib.utils :as u]
             [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
@@ -14,17 +15,17 @@
           s (.parseToString tika stream)
           intro (.substring s 0 500)
           dates (u/parse-human-date-range-within intro)
-          job-approval-idx (clojure.string/index-of s "President Trump Job Approval")
-          question-idx (clojure.string/index-of s "Do you approve or disapprove of the way Donald Trump is handling his job as President?" job-approval-idx)
-          header-idx (clojure.string/index-of s "Registered voters Gender Age" question-idx)
+          job-approval-idx (string/index-of s "President Trump Job Approval")
+          question-idx (string/index-of s "Do you approve or disapprove of the way Donald Trump is handling his job as President?" job-approval-idx)
+          header-idx (string/index-of s "Registered voters Gender Age" question-idx)
           strongly-approve-str "Strongly approve"
           after-strongly-approve-idx (+ (count strongly-approve-str)
-                                        (clojure.string/index-of s strongly-approve-str question-idx))
-          strongly-approve-% (clojure.string/index-of s "%" after-strongly-approve-idx)
+                                        (string/index-of s strongly-approve-str question-idx))
+          strongly-approve-% (string/index-of s "%" after-strongly-approve-idx)
           somewhat-approve-str "Somewhat approve"
           after-somewhat-approve-idx (+ (count somewhat-approve-str)
-                                        (clojure.string/index-of s somewhat-approve-str after-strongly-approve-idx))
-          somewhat-approve-% (clojure.string/index-of s "%" after-somewhat-approve-idx)
+                                        (string/index-of s somewhat-approve-str after-strongly-approve-idx))
+          somewhat-approve-% (string/index-of s "%" after-somewhat-approve-idx)
           strongly-approve (-> s
                                (.substring after-strongly-approve-idx strongly-approve-%)
                                .trim

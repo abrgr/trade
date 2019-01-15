@@ -334,7 +334,7 @@
 
 (defn run [cfg state end-chan]
     (let [dist-by-days (->> cfg
-                            :com.adamgberger.predictit.strategies.approval-rating-rcp
+                            ::id
                             :dist-by-days
                             (map (fn [[days dist]]
                                 [days (org.apache.commons.math3.distribution.NormalDistribution. (:mean dist) (:std dist))]))

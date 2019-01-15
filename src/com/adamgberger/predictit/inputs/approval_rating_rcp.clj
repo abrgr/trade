@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.inputs.approval-rating-rcp
-  (:require [clj-http.client :as h]
+  (:require [clojure.string :as string]
+            [clj-http.client :as h]
             [hickory.core :as m]
             [hickory.select :as s]
             [com.adamgberger.predictit.apis.json-url :as j]
@@ -13,8 +14,8 @@
     "They return something like return_json({...the stuff we want})"
     [s]
     (as-> s s
-          (.substring s (clojure.string/index-of s "{"))
-          (.substring s 0 (inc (clojure.string/last-index-of s "}")))))
+          (.substring s (string/index-of s "{"))
+          (.substring s 0 (inc (string/last-index-of s "}")))))
 
 (defn- get-raw []
     (let [browser-url "https://www.realclearpolitics.com/epolls/other/president_trump_job_approval-6179.html"
@@ -68,7 +69,7 @@
                     [src (assoc val :end end)])))
         (filter
             (fn [[src val]]
-                (and (> (compare (:start val) start-date) 0)
+                (and (>= (compare (:start val) start-date) 0)
                      (<= (compare (:end val) end-date) 0))))
         (filter #(and some?
                       (not= (first %) "RCP Average")

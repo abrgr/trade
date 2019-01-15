@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.lib.log
-  (:require [clojure.core.async :as async])
+  (:require [clojure.string :as string]
+            [clojure.core.async :as async])
   (:gen-class))
 
 (def log-chan (async/chan 100))
@@ -17,7 +18,7 @@
             (async/>!! log-chan msg))))
 
 (defn ex-log-msg [ex]
-    {:stack (clojure.string/join "  <-  " (.getStackTrace ex))
+    {:stack (string/join "  <-  " (.getStackTrace ex))
      :ex-data (ex-data ex)
      :ex-msg (.getMessage ex)
      :ex-cls (-> ex .getClass .getCanonicalName)})

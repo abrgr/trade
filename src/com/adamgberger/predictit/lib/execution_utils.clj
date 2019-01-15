@@ -95,7 +95,4 @@
                                                        :order-book order-book})
                 {:price usable-price
                  :trade-type trade-type})
-            (do (l/log :info "No trade" {:mins mins
-                                         :est-value est-value
-                                         :order-book order-book})
-                nil))))
+            nil)))

@@ -1,5 +1,7 @@
 (ns com.adamgberger.predictit.apis.predictit
   (:require [clj-http.client :as h]
+            [clj-http.conn-mgr :as conn-mgr]
+            [clj-http.cookies :as cookies]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [com.adamgberger.predictit.lib.log :as l]
@@ -24,9 +26,9 @@
 (defn predictit-site-url [path]
     (str (:site-url -cfg) path))
 
-(def cm (clj-http.conn-mgr/make-reusable-conn-manager {:timeout 10 :threads 30}))
+(def cm (conn-mgr/make-reusable-conn-manager {:timeout 10 :threads 30}))
 
-(def cs (clj-http.cookies/cookie-store))
+(def cs (cookies/cookie-store))
 
 (defn http-post [url opts]
     (let
@@ -88,7 +90,7 @@
                 (cond
                     (= evt "keep-alive")
                         nil
-                    (and (= evt "put"))
+                    (= evt "put")
                         (do
                             (when (not= (:path payload) "/")
                                   (throw (ex-info "Bad payload" {:should-retry false :payload payload})))
@@ -247,7 +249,7 @@
                            (merge (json-req))
                            (merge (with-auth auth)))
             params {:headers headers}
-            resp (http-post (predictit-api-url "/Trade/CancelOffer/" order-id) params)]
+            resp (http-post (predictit-api-url (str "/Trade/CancelOffer/" order-id)) params)]
             {:success true})))
 
 (defn get-orders

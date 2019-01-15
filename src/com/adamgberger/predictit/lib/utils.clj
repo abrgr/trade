@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.lib.utils
-  (:require [clojure.core.async :as async]
+  (:require [clojure.string :as string]
+            [clojure.core.async :as async]
             [clojure.data.json :as json]
             [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
@@ -133,9 +134,9 @@
 (defn parse-historical-month-day-range
   "E.x. 1/10 - 1/15"
   [s]
-  (let [[from to] (clojure.string/split s #"\s*[-]\s*")
-        [from-mon from-day] (map #(Integer/parseInt %) (clojure.string/split from #"/"))
-        [to-mon to-day] (map #(Integer/parseInt %) (clojure.string/split to #"/"))]
+  (let [[from to] (string/split s #"\s*[-]\s*")
+        [from-mon from-day] (map #(Integer/parseInt %) (string/split from #"/"))
+        [to-mon to-day] (map #(Integer/parseInt %) (string/split to #"/"))]
     {:from (most-recent-month-day from-mon from-day)
      :to (most-recent-month-day to-mon to-day)}))
 
