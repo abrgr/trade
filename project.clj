@@ -9,6 +9,7 @@
                  [org.apache.tika/tika-parsers "1.20"]
                  [hickory "0.7.1"]
                  [org.clojure/data.csv "0.1.4"]]
+  :plugins [[jonase/eastwood "0.3.4"]]
   :main ^:skip-aot com.adamgberger.predictit.main
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})
