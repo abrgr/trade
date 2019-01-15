@@ -250,6 +250,34 @@
             resp (http-post (predictit-api-url "/Trade/CancelOffer/" order-id) params)]
             {:success true})))
 
+(defn get-orders
+    "Retrieves current orders.
+     Returns something like this:
+     {:orders [{:offerId 23041022,
+                :contractId 13815,
+                :pricePerShare 0.89,
+                :quantity 50,
+                :remainingQuantity 50,
+                :tradeType 2,
+                :dateCreated #inst\"2019-01-14T20:56:41.56\",
+                :isProcessed true}]}"
+    [auth market-id full-market-url contract-id]
+    (l/with-log :debug "Get orders"
+        (let [headers (->> (from-page full-market-url)
+                           (merge (json-req))
+                           (merge (with-auth auth)))
+            value-fns {:dateCreated utils/parse-isoish-datetime
+                       :pricePerShare utils/to-decimal}
+            url (predictit-api-url (str "/Profile/contract/" contract-id "/Offers"))
+            resp (http-get url {:headers headers})]
+            (when-not (-> resp :body some?)
+                (throw (ex-info "Bad orders response" {:resp resp})))
+            (let [json (resp-from-json resp value-fns)
+                  allow-cancel (:allowCancel json)]
+                {:orders (map
+                            #(merge {:allowCancel allow-cancel} %)
+                            (:offers json))}))))
+
 (defn get-order-book
     "Retrieves current order book.
      Returns something like this:

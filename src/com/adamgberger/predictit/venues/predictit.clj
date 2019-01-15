@@ -99,6 +99,19 @@
             adapt-order-book
             (api/monitor-order-book (:auth venue) market-id full-market-url contract-id))))
 
+(defn- -orders
+    [venue market-id full-market-url contract-id]
+    (->> (api/get-orders market-id full-market-url contract-id)
+         :orders
+         (map
+            (fn [o]
+                {:order-id (:offerId o)
+                 :contract-id (:contractId o)
+                 :qty (:remainingQuantity o)
+                 :trade-type (-> o :tradeType side-by-trade-type)
+                 :created-at (:dateCreated o)
+                 :cancellable? (:allowCancel o)}))))
+
 (defn- -contracts
     [venue market-id full-market-url]
     (let [resp (api/get-contracts venue market-id full-market-url)
@@ -155,4 +168,6 @@
             (positions [this] (-positions auth))
             (contracts [this market-id full-market-url] (-contracts auth market-id full-market-url))
             (monitor-order-book [this market-id market-name contract-id]
-                (-monitor-order-book auth market-id market-name contract-id)))))
+                (-monitor-order-book auth market-id market-name contract-id))
+            (orders [this market-id full-market-url contract-id]
+                (-orders this market-id full-market-url contract-id)))))
