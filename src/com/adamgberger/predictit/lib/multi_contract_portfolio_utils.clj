@@ -54,7 +54,7 @@
 
 ; TODO: this is just giving me the kelly bet for each contract, which seems totally wrong due to perfect correlation
 ;       need to work on the obj function
-(defn get-optimal-bets [contracts-price-and-prob]
+(defn get-optimal-bets [hurdle-return contracts-price-and-prob]
     (try
         (let [f (reify MultivariateFunction
                     (value [this point]
@@ -83,6 +83,8 @@
                     (map
                         #(assoc %1 :weight %2)
                         contracts-price-and-prob)
+                    (filter
+                        #(> (:prob %) (* (+ 1 hurdle-return) (:price %))))
                     (into [])))
         (catch org.apache.commons.math3.exception.TooManyEvaluationsException e
             (l/log :error "Failed to optimize portfolio" (merge {:contracts-price-and-prob contracts-price-and-prob} (l/ex-log-msg e))))))

@@ -216,12 +216,20 @@
 (defn trades-for-mkt [mkt latest-major-input-change cur order-books-by-contract-id prob-by-contract-id]
     (let [time-info (market-time-info (:end-date mkt) latest-major-input-change)
           {:keys [fill-mins]} time-info
+          contract-ids-with-order-books (->> order-books-by-contract-id
+                                             keys
+                                             (into #{}))
+          contract-ids (->> prob-by-contract-id
+                            keys
+                            (into #{}))
+          valid? (clojure.set/superset? contract-ids-with-order-books contract-ids)
           price-and-prob-for-contract (fn [[contract-id prob]]
                                         (let [contract (get-contract mkt contract-id)
                                               order-book (get order-books-by-contract-id contract-id)
                                               adj-p (target-prob contract time-info cur latest-major-input-change prob)
                                               likely-fill (execution-utils/get-likely-fill fill-mins adj-p order-book)]
                                             (when (some? likely-fill)
+                                                ; TODO: once target-prob logic is folded into earlier prob calculaton, set :prob = (:est-value likely-fill)
                                                 {:prob (if (= (:trade-type likely-fill) :buy-no)
                                                            (- 1 adj-p)
                                                            adj-p)
@@ -233,7 +241,9 @@
                                          (map price-and-prob-for-contract)
                                          (filter some?)
                                          (into []))]
-        (port-opt-utils/get-optimal-bets contracts-price-and-prob)))
+        (if valid?
+            (port-opt-utils/get-optimal-bets 0.2 contracts-price-and-prob)
+            [])))
 
 (defn update-trades [state strat-state end-chan]
     (l/with-log :info "Updating trades"

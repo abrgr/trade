@@ -227,11 +227,13 @@
                    :venues
                    (filter #(= (v/id %) venue-id))
                    first)
-        contract-ids (->> venue-state
-                          :contracts
-                          mkt-id
-                          keys)
+        contract-ids (-> venue-state
+                         venue-id
+                         :contracts
+                         (get mkt-id)
+                         keys)
         mkt-name (->> venue-state
+                      venue-id
                       :mkts
                       (filter #(= (:market-id %) mkt-id))
                       first
@@ -256,7 +258,8 @@
             [mkt-id
              (if (nil? orders)
                 (get-orders state venue-id venue-state mkt-id)
-                orders)])))))
+                orders)]))
+         (into {}))))
 
 (defn desired-pos-for-req-pos [bankroll req-pos]
   {:contract-id (:contract-id req-pos)
@@ -307,6 +310,7 @@
                   orders (or (get outstanding-orders-by-contract-id contract-id) [])
                   current-side (:side current)
                   current-qty (:qty current)
+                  target-price (:target-price pos)
                   sell-current (sell-trade-type-for-side current-side)
                   ords-by-trade-type (orders-by-trade-type orders)
                   current-holding (* current-qty (:avg-price-paid current))]
@@ -317,6 +321,7 @@
                      {:trade-type sell-current
                       :qty current-qty
                       :contract-id contract-id
+                      :target-price target-price
                       :price :?}) ; TODO
                  ; we have buy orders out for the wrong side; cancel them
                  (let [opp-buy (-> desired-side opposite-side buy-trade-type-for-side)
@@ -325,6 +330,7 @@
                        (map
                           (fn [ord]
                             {:trade-type :cancel
+                             :target-price target-price
                              :contract-id contract-id
                              :order-id (:order-id ord)})
                           ords-to-cancel)))
@@ -336,6 +342,7 @@
                           (fn [ord]
                             {:trade-type :cancel
                              :contract-id contract-id
+                             :target-price target-price
                              :order-id (:order-id ord)})
                           ords-to-cancel)))
                  ; we want to buy
@@ -365,38 +372,47 @@
                         {:trade-type (:trade-type pos)
                          :contract-id contract-id
                          :qty remaining-qty
+                         :target-price target-price
                          :price (:price pos)})]
                       ; canceling our old orders with bad prices
                       (map
                         (fn [ord]
                           {:trade-type :cancel
                            :contract-id contract-id
+                           :target-price target-price
                            :order-id (:order-id ord)})
                         ords-to-cancel)))]
                 flatten
-                (filter some?)))))))
+                (filter some?)
+                (into [])))))))
 
 (defn execute-trades [state end-chan venue-id req-pos-by-strat-id]
   (l/with-log :info "Executing trades"
     (let [venue-state @(:venue-state state)
           {:keys [cfg]} state]
       (doseq [[strat-id req-positions-by-mkt-id] req-pos-by-strat-id]
-        (doseq [[mkt-id req-positions] req-positions-by-mkt-id]
-          (let [bankroll (strat-bankroll venue-state cfg strat-id venue-id)
-                outstanding-orders-by-contract-id (outstanding-orders-for-strat state venue-id venue-state strat-id)]
-            (if (nil? bankroll)
-              nil
-              (let [desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
-                    pos-by-contract-id (->> (:pos venue-state)
-                                            (mapcat :contracts)
-                                            (reduce
-                                              (fn [by-id c]
-                                                (assoc by-id (:contract-id c) c))
-                                              {}))
-                    trades (adjust-desired-pos-for-actuals desired-pos pos-by-contract-id outstanding-orders-by-contract-id)]
-                ; TODO: keep track of orders we expect
-                ; TODO: execute these trades
-                (l/log :info "Trades" {:trades trades})))))))))
+        (let [outstanding-orders-by-contract-id-by-mkt-id (outstanding-orders-for-strat state venue-id venue-state strat-id)]
+          (doseq [[mkt-id req-positions] req-positions-by-mkt-id]
+            (let [bankroll (strat-bankroll venue-state cfg strat-id venue-id)
+                  outstanding-orders-by-contract-id (get outstanding-orders-by-contract-id-by-mkt-id mkt-id)]
+              (if (nil? bankroll)
+                nil
+                (let [desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
+                      pos-by-contract-id (->> venue-state
+                                              venue-id
+                                              :pos
+                                              (mapcat :contracts)
+                                              (reduce
+                                                (fn [by-id c]
+                                                  (assoc by-id (:contract-id c) c))
+                                                {}))
+                      trades (adjust-desired-pos-for-actuals desired-pos pos-by-contract-id outstanding-orders-by-contract-id)]
+                  ; TODO: keep track of orders we expect
+                  ; TODO: execute these trades
+                  (l/log :info "Trades" {:desired-pos desired-pos
+                                        :pos-by-contract-id pos-by-contract-id
+                                        :outstanding-orders-by-contract-id outstanding-orders-by-contract-id
+                                        :trades trades}))))))))))
 
 (defn run-executor [state end-chan]
   (let [venue-id (-> state :venues first v/id)]

@@ -101,20 +101,22 @@
 
 (defn- -orders
     [venue market-id full-market-url contract-id]
-    (->> (api/get-orders market-id full-market-url contract-id)
+    (->> (api/get-orders (:auth venue) market-id full-market-url contract-id)
          :orders
          (map
             (fn [o]
                 {:order-id (:offerId o)
                  :contract-id (:contractId o)
                  :qty (:remainingQuantity o)
+                 :price (:pricePerShare o)
                  :trade-type (-> o :tradeType side-by-trade-type)
                  :created-at (:dateCreated o)
-                 :cancellable? (:allowCancel o)}))))
+                 :cancellable? (:allowCancel o)}))
+         (into [])))
 
 (defn- -contracts
     [venue market-id full-market-url]
-    (let [resp (api/get-contracts venue market-id full-market-url)
+    (let [resp (api/get-contracts (:auth venue) market-id full-market-url)
           adapt-contract (fn [c]
                             {:contract-id (:contractId c)
                              :contract-name (:contractName c)
@@ -170,4 +172,4 @@
             (monitor-order-book [this market-id market-name contract-id]
                 (-monitor-order-book auth market-id market-name contract-id))
             (orders [this market-id full-market-url contract-id]
-                (-orders this market-id full-market-url contract-id)))))
+                (-orders auth market-id full-market-url contract-id)))))

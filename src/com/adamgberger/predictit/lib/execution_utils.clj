@@ -13,7 +13,7 @@
         :buy [yn :sell]
         :sell [yn :buy]))
 
-(defn- find-price-for-mins [immediate-price last cur-best mins]
+(defn find-price-for-mins [immediate-price last cur-best mins]
     (let [pts (org.apache.commons.math3.fitting.WeightedObservedPoints.)
           fitter (org.apache.commons.math3.fitting.PolynomialCurveFitter/create 2)
           epsilon 0.01
@@ -28,9 +28,9 @@
           un-xform-y (fn [y] (dir immediate-price (Math/exp y)))]
         (.add pts 1.0 (xform-x 0) (xform-y immediate-price))
         (when (some? last-price)
-            (.add pts 2.0 (xform-x 20) (xform-y last-price)))
-        (.add pts 0.5 (xform-x 60) (xform-y mid))
-        (.add pts 1.0 (xform-x 180) (xform-y cur-best))
+            (.add pts 2.0 (xform-x 10) (xform-y last-price)))
+        (.add pts 0.5 (xform-x 30) (xform-y mid))
+        (.add pts 1.0 (xform-x 100) (xform-y cur-best))
         (let [f (org.apache.commons.math3.analysis.polynomials.PolynomialFunction. (.fit fitter (.toList pts)))]
             (un-xform-y (.value f (xform-x mins))))))
 
@@ -69,14 +69,14 @@
                   our-side-est-value (if (= trade-type :buy-no)
                                          (- 1 est-value)
                                          est-value)
-                  cur-best (or (best-price our-side-orders)
-                               (min (* our-side-est-value 0.6) 0.01))
                   immediate-price (or (best-price opp-side-orders)
-                                      (max 0.99 (* our-side-est-value 1.6)))
+                                      (min 0.99 (* our-side-est-value 1.6)))
                   last-price (if (and (= trade-type :buy-no)
                                       (some? last-price))
                                  (- 1 last-price)
                                  last-price)
+                  cur-best (or (best-price our-side-orders)
+                               (max (* our-side-est-value 0.6) (or last-price 0.01)))
                   likely-price (find-price-for-mins immediate-price last-price cur-best mins)
                   usable-price (min
                                     our-side-est-value
@@ -92,7 +92,9 @@
                                                        :est-value est-value
                                                        :last-price last-price
                                                        :trade-type trade-type
-                                                       :order-book order-book})
+                                                       :immediate-price immediate-price
+                                                       :cur-best cur-best})
                 {:price usable-price
+                 :est-value our-side-est-value
                  :trade-type trade-type})
             nil)))
