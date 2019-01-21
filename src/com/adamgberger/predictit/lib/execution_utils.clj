@@ -13,7 +13,7 @@
         :buy [yn :sell]
         :sell [yn :buy]))
 
-(defn find-price-for-mins [immediate-price last cur-best mins]
+(defn- find-price-for-mins [immediate-price last cur-best mins]
     (let [pts (org.apache.commons.math3.fitting.WeightedObservedPoints.)
           fitter (org.apache.commons.math3.fitting.PolynomialCurveFitter/create 2)
           epsilon 0.01

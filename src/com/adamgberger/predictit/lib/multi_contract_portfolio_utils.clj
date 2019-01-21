@@ -1,90 +1,88 @@
 (ns com.adamgberger.predictit.lib.multi-contract-portfolio-utils
   (:require [com.adamgberger.predictit.lib.log :as l])
-  (:import (org.apache.commons.math3.optim InitialGuess
-                                           OptimizationData
-                                           MaxEval)
-           (org.apache.commons.math3.optim.nonlinear.scalar ObjectiveFunction
-                                                            GoalType
-                                                            MultivariateFunctionMappingAdapter)
-           (org.apache.commons.math3.optim.nonlinear.scalar.noderiv PowellOptimizer)
-           (org.apache.commons.math3.analysis MultivariateFunction))
+  (:import (de.xypron.jcobyla Calcfc
+                              Cobyla
+                              CobylaExitStatus))
   (:gen-class))
 
 (defn- odds [pos result]
-    (cond
-        (and (= result :yes) (>= (:wager pos) 0)) (/ 1 (:price pos))
-        (and (= result :no)  (>= (:wager pos) 0)) -1
-        (and (= result :yes) (< (:wager pos)  0)) 1
-        (and (= result :no)  (< (:wager pos)  0)) (/ 1 (- 1 (:price pos)))))
+    (let [{:keys [prob price cash?]} pos
+          result-yes? (= result :yes)
+          result-no? (not result-yes?)
+          bet-yes? (or cash? (>= prob price))
+          bet-no? (not bet-yes?)]
+        (cond
+            cash? 0
+            (and result-yes? bet-yes?) (/ 1 price)
+            (and result-no?  bet-yes?) -1
+            (and result-yes? bet-no?)  -1
+            (and result-no?  bet-no?)  (/ 1 (- 1 price)))))
 
 (defn- wager-result [pos result]
-    (let [{:keys [wager prob price]} pos
-          b (odds pos result)
-          bet-no? (< prob price) ; TODO: would prefer to generate endogenously from the optimization but can't quite make that work
-          result-prob (if (= result :yes)
-                          prob
-                          (- 1 prob))]
-        (if bet-no?
-            (wager-result
-                {:prob (- 1 prob)
-                 :wager (* -1 wager)
-                 :price (- 1 price)}
-                (if (= result :yes) :no :yes))
-            (* result-prob
-               (java.lang.Math/log (+ 1 (* b wager )))))))
+    (let [{:keys [wager price]} pos
+          b (odds pos result)]
+        (* b (Math/abs wager))))
 
-(defn growth-for-pos [pos]
-    (let [yes-prob (:prob pos)
-          no-prob (- 1 yes-prob)]
-        (+ (wager-result pos :yes)
-           (wager-result pos :no))))
+(defn- growth-for-yes-pos [contract-positions pos]
+    (let [g (reduce
+                (fn [sum this-pos]
+                    (let [side (if (= this-pos pos) :yes :no)
+                          res (wager-result this-pos side)]
+                        (+ sum res)))
+                1.0
+                contract-positions)]
+        (Math/log g)))
 
-(defn growth-rate [contract-positions]
+(defn- growth-rate [contract-positions]
     ; This is adapted from Thorpe's discussion of the Kelly Criterion
     ; http://www.eecs.harvard.edu/cs286r/courses/fall12/papers/Thorpe_KellyCriterion2007.pdf
     (reduce
-        (fn [sum pos] (+ sum (growth-for-pos pos)))
+        (fn [sum {:keys [prob] :as pos}]
+            (let [exp-growth (* prob (growth-for-yes-pos contract-positions pos))]
+                (+ sum exp-growth)))
         0.0
         contract-positions))
 
-; TODO: really need to make this an optimization constraint
-(defn- normalize [weights]
-    (let [sum (reduce + 0.0 weights)]
-        (map #(/ % sum) weights)))
+(defn kelly [p b]
+    (/
+        (-
+            (* p (+ b 1))
+            1)
+        b))
 
-; TODO: this is just giving me the kelly bet for each contract, which seems totally wrong due to perfect correlation
-;       need to work on the obj function
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
-    (try
-        (let [f (reify MultivariateFunction
-                    (value [this point]
-                        (growth-rate
-                            (map #(assoc %1 :wager %2) contracts-price-and-prob point))))
-            min-wager -1
-            max-wager 1
-            len (count contracts-price-and-prob)
-            obj (MultivariateFunctionMappingAdapter.
-                    f
-                    (double-array len (repeat min-wager))
-                    (double-array len (repeat max-wager)))
-            optimizer (PowellOptimizer. 1e-13 1e-40)
-            opt (.optimize
-                    optimizer
-                    (into-array
-                        OptimizationData
-                        [(MaxEval. 100000)
-                        (ObjectiveFunction. obj)
-                        GoalType/MAXIMIZE
-                        (InitialGuess. (double-array len (repeat 0)))]))]
-                (->> opt
-                    .getPoint
-                    (.unboundedToBounded obj)
-                    normalize
-                    (map
-                        #(assoc %1 :weight %2)
+    (let [total-prob (->> contracts-price-and-prob
+                            (map :prob)
+                            (reduce + 0.0))
+          remaining-prob (- 1 total-prob)
+          added-cash? (> remaining-prob 0.0)
+          contracts (if added-cash?
+                        (conj contracts-price-and-prob {:prob remaining-prob :cash? true})
                         contracts-price-and-prob)
-                    (filter
-                        #(> (:prob %) (* (+ 1 hurdle-return) (:price %))))
-                    (into [])))
-        (catch org.apache.commons.math3.exception.TooManyEvaluationsException e
-            (l/log :error "Failed to optimize portfolio" (merge {:contracts-price-and-prob contracts-price-and-prob} (l/ex-log-msg e))))))
+          len (count contracts)
+          ; constraints are represented as functions that must be non-negative
+          non-neg-constraints (map
+                                (fn [i]
+                                    (fn [x con]
+                                        (aset-double con (inc i) (nth x i))))
+                                (range len))
+          budget-constraint (fn [x con]
+                                (aset-double con 0 (-1 (reduce #(+ %1 (Math/abs %2)) 0.0 x))))
+          constraints (conj non-neg-constraints budget-constraint)
+          num-constraints (count constraints)
+          f (reify Calcfc
+                (compute [this n m x con]
+                    (map #(% x con) constraints)
+                    (* -1 (growth-rate (map #(assoc %1 :wager %2) contracts x)))))
+          weights (double-array len (repeat (/ 1.0 len)))
+          rho-start 0.1
+          rho-end 1.0e-6
+          res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 10000)]
+        (if (= CobylaExitStatus/NORMAL res)
+            (->> weights
+                 (map
+                    #(assoc %1 :weight %2)
+                    contracts)
+                 (#(if added-cash? (drop-last %) %)) ; remove our filler contract
+                 (into []))
+            (l/log :error "Failed to optimize portfolio" (merge {:contracts-price-and-prob contracts-price-and-prob})))))
