@@ -213,7 +213,7 @@
          (filter #(= (:contract-id %) contract-id))
          first))
 
-(defn trades-for-mkt [mkt latest-major-input-change cur order-books-by-contract-id prob-by-contract-id]
+(defn trades-for-mkt [hurdle-rate mkt latest-major-input-change cur order-books-by-contract-id prob-by-contract-id]
     (let [time-info (market-time-info (:end-date mkt) latest-major-input-change)
           {:keys [fill-mins]} time-info
           contract-ids-with-order-books (->> order-books-by-contract-id
@@ -242,10 +242,10 @@
                                          (filter some?)
                                          (into []))]
         (if valid?
-            (port-opt-utils/get-optimal-bets 0.2 contracts-price-and-prob)
+            (port-opt-utils/get-optimal-bets 0.1 contracts-price-and-prob)
             [])))
 
-(defn update-trades [state strat-state end-chan]
+(defn update-trades [state strat-state end-chan hurdle-rate]
     (l/with-log :info "Updating trades"
         (let [ss @strat-state
               prob-dist (:prob-dist ss)
@@ -259,6 +259,7 @@
                               first))
               get-trades-for-market (fn [[mkt-id p-by-ctrct]]
                                         {mkt-id (trades-for-mkt
+                                                    hurdle-rate
                                                     (get-mkt mkt-id)
                                                     latest-major-input-change
                                                     cur
@@ -269,10 +270,10 @@
                           (apply merge))]
             (send (:venue-state state) #(assoc-in % [venue-id :req-pos ::id] trades)))))
 
-(defn maintain-trades [state strat-state end-chan]
+(defn maintain-trades [state strat-state end-chan hurdle-rate]
     ; TODO: also tick update-trades more frequently as we near the end of the market
     (letfn [(upd [_]
-                (update-trades state strat-state end-chan))
+                (update-trades state strat-state end-chan hurdle-rate))
             (valid? [old new]
                 (and (some? new)
                      (not= old new)))]
@@ -343,17 +344,19 @@
             upd)))
 
 (defn run [cfg state end-chan]
-    (let [dist-by-days (->> cfg
-                            ::id
-                            :dist-by-days
+    (let [{:keys [dist-by-days hurdle-rate]} (::id cfg)
+          dist-by-days (->> dist-by-days
                             (map (fn [[days dist]]
                                 [days (org.apache.commons.math3.distribution.NormalDistribution. (:mean dist) (:std dist))]))
                             (into {}))
           strat-state (l/logging-agent "rcp-strat" (agent {:dist-by-days dist-by-days}))]
-          (maintain-relevant-mkts state strat-state end-chan)
-          (maintain-order-books state strat-state end-chan)
-          (maintain-local-markets state strat-state end-chan)
-          (maintain-probs state strat-state end-chan)
-          (maintain-trades state strat-state end-chan)
-          (maintain-major-input-changes state strat-state end-chan)
-          {::state strat-state}))
+        (when (or (nil? dist-by-days)
+                  (nil? hurdle-rate))
+            (throw (ex-info "Bad config for rcp strategy" {:cfg (::id cfg)})))
+        (maintain-relevant-mkts state strat-state end-chan)
+        (maintain-order-books state strat-state end-chan)
+        (maintain-local-markets state strat-state end-chan)
+        (maintain-probs state strat-state end-chan)
+        (maintain-trades state strat-state end-chan hurdle-rate)
+        (maintain-major-input-changes state strat-state end-chan)
+        {::state strat-state}))
