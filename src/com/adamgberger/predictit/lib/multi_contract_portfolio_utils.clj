@@ -43,22 +43,18 @@
         0.0
         contract-positions))
 
-(defn kelly [p b]
-    (/
-        (-
-            (* p (+ b 1))
-            1)
-        b))
-
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
     (let [total-prob (->> contracts-price-and-prob
                             (map :prob)
                             (reduce + 0.0))
           remaining-prob (- 1 total-prob)
           added-cash? (> remaining-prob 0.0)
+          filtered-contracts (filter
+                                #(> (+ (* (:prob %) (p/odds % :yes)) (* (- 1 (:prob %)) (p/odds % :no))) (+ 1 hurdle-return))
+                                contracts-price-and-prob)
           contracts (if added-cash?
                         (conj contracts-price-and-prob {:prob remaining-prob :cash? true})
-                        contracts-price-and-prob)
+                        filtered-contracts)
           len (count contracts)
           ; constraints are represented as functions that must be non-negative
           non-neg-constraints (map
