@@ -33,10 +33,12 @@
           somewhat-approve (-> s
                                (.substring after-somewhat-approve-idx somewhat-approve-%)
                                .trim
-                               Integer/parseInt)]
+                               Integer/parseInt)
+          {:keys [end-date]} dates]
         ; TODO: validate that somewhat-approve-idx immediately follows strongly-approve-idx i.f. header-idx i.f. question-idx i.f. job-approval-idx
         {:val (+ strongly-approve somewhat-approve)
-         :date (:end-date dates)}))
+         :date end-date
+         :next-expected (u/next-weekday-at end-date u/ny-time 16 0)}))
 
 (defn extract-link [html]
   (let [pat #"https://[^.]+.cloudfront.net/cumulus_uploads/document/[^/]+/tabs_Trump_Tweets_\d{8}.pdf"]

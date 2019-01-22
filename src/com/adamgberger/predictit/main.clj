@@ -440,7 +440,7 @@
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
     (maintain-order-books state end-chan)
-    (estimators/start-all state end-chan)
+    (estimators/start-all (:estimators cfg) state end-chan)
     (inputs/start-all state end-chan)
     (state-watchdog state end-chan)
     (async/<!! end-chan)))

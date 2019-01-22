@@ -36,10 +36,17 @@
           somewhat-approve (-> s
                                (.substring total-somewhat-approve-% registered-somewhat-approve-%)
                                .trim
-                               Integer/parseInt)]
+                               Integer/parseInt)
+          {:keys [end-date]} dates
+          next-expected (-> end-date
+                            (.atStartOfDay u/ny-time)
+                            (.plus 1 java.time.temporal.ChronoUnit/WEEKS)
+                            (.withHour 16)
+                            (.withMinute 0))]
         ; TODO: validate
         {:val (+ strongly-approve somewhat-approve)
-         :date (:end-date dates)}))
+         :date end-date
+         :next-expected next-expected}))
 
 (defn extract-link [html]
   (let [pat #"https://[^.]+.cloudfront.net/cumulus_uploads/document/[^/]+/econTabReport.pdf"]

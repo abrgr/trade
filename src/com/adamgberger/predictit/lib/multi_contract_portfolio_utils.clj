@@ -6,10 +6,10 @@
   (:gen-class))
 
 (defn- odds [pos result]
-    (let [{:keys [prob price cash?]} pos
+    (let [{:keys [price trade-type cash?]} pos
           result-yes? (= result :yes)
           result-no? (not result-yes?)
-          bet-yes? (or cash? (>= prob price))
+          bet-yes? (or cash? (= trade-type :buy-yes))
           bet-no? (not bet-yes?)]
         (cond
             cash? 0
@@ -50,7 +50,7 @@
           remaining-prob (- 1 total-prob)
           added-cash? (> remaining-prob 0.0)
           filtered-contracts (filter
-                                #(> (+ (* (:prob %) (p/odds % :yes)) (* (- 1 (:prob %)) (p/odds % :no))) (+ 1 hurdle-return))
+                                #(> (+ (* (:prob %) (odds % :yes)) (* (- 1 (:prob %)) (odds % :no))) (+ 1 hurdle-return))
                                 contracts-price-and-prob)
           contracts (if added-cash?
                         (conj contracts-price-and-prob {:prob remaining-prob :cash? true})
@@ -73,7 +73,7 @@
           weights (double-array len (repeat (/ 1.0 len)))
           rho-start 0.1
           rho-end 1.0e-6
-          res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 10000)]
+          res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 100000)]
         (if (= CobylaExitStatus/NORMAL res)
             (->> weights
                  (map
@@ -81,4 +81,6 @@
                     contracts)
                  (#(if added-cash? (drop-last %) %)) ; remove our filler contract
                  (into []))
-            (l/log :error "Failed to optimize portfolio" (merge {:contracts-price-and-prob contracts-price-and-prob})))))
+            (do (l/log :error "Failed to optimize portfolio" {:contracts-price-and-prob contracts-price-and-prob
+                                                              :opt-result res})
+                []))))

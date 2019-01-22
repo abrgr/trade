@@ -7,6 +7,6 @@
 (def estimators 
     {approval-rcp/id approval-rcp/run})
 
-(defn start-all [state end-chan]
+(defn start-all [cfg state end-chan]
     (doseq [[id estimator] estimators]
-        (estimator state end-chan)))
+        (estimator cfg state end-chan)))

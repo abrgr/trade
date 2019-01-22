@@ -144,6 +144,21 @@
   [d]
   (.truncatedTo d java.time.temporal.ChronoUnit/DAYS))
 
+(def weekend-days? #{6 7})
+
+(def ny-time (java.time.ZoneId/of "America/New_York"))
+
+(defn next-weekday-at [local-date tz hour minute]
+  (let [tomorrow (-> local-date
+                     (.atStartOfDay tz)
+                     (.plus 1 java.time.temporal.ChronoUnit/DAYS))
+        tomorrow-day (.get tomorrow java.time.temporal.ChronoField/DAY_OF_WEEK)]
+      (if (weekend-days? tomorrow-day)
+          (next-weekday-at (.toLocalDate tomorrow) tz hour minute)
+          (-> tomorrow
+              (.withHour hour)
+              (.withMinute minute)))))
+
 (defn glb-key
   "Returns the greatest item in items such that (<= (key-fn item) tgt)"
   [items tgt key-fn]

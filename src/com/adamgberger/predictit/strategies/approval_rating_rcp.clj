@@ -139,15 +139,11 @@
                   updater #(assoc % :tradable-mkts adapted-mkts)]
                 (send strat-state updater)))))
 
-(defn contract-prob-dist [dist-by-days end-date approval-rating contracts]
+(defn contract-prob-dist [dist approval-rating contracts]
     (->> contracts
          (map
             (fn [contract]
-                (let [day-count (.between java.time.temporal.ChronoUnit/DAYS
-                                          (java.time.LocalDate/now)
-                                          end-date)
-                      dist (get dist-by-days day-count)
-                      bounds (:bounds contract)
+                (let [bounds (:bounds contract)
                       {:keys [lower-inclusive upper-inclusive]} bounds
                       l (- lower-inclusive approval-rating)
                       u (- upper-inclusive approval-rating)
@@ -159,17 +155,25 @@
 
 (defn mkt-prob-dists [dist-by-days tradable-mkts approval-rating]
     (->> tradable-mkts
-         (map (fn [mkt] [(:market-id mkt) (contract-prob-dist dist-by-days (:end-date mkt) approval-rating (:contracts mkt))]))
-         (into {})))
+        (map
+            (fn [{:keys [market-id end-date contracts]}]
+                (let [day-count (.between java.time.temporal.ChronoUnit/DAYS
+                                (java.time.LocalDate/now)
+                                end-date)
+                        dist (get dist-by-days day-count)]
+                    (if (some? dist)
+                        [market-id (contract-prob-dist dist approval-rating contracts)]
+                        nil))))
+        (filter some?)
+        (into {})))
 
 (defn update-probs [state strat-state end-chan]
     (l/log :info "Updating RCP probabilities")
-    (let [approval (-> @(:estimates state) rcp-estimate-id :val)
+    (let [{:keys [dists-by-day val]} (-> @(:estimates state) rcp-estimate-id)
           tradable-mkts (:tradable-mkts @strat-state)
-          dist-by-days (:dist-by-days @strat-state)
           prob-dist (when (and (some? tradable-mkts)
-                               (some? approval))
-                          (mkt-prob-dists dist-by-days tradable-mkts approval))]
+                               (some? val))
+                          (mkt-prob-dists dists-by-day tradable-mkts val))]
         (when (some? prob-dist)
             (send strat-state #(assoc % :prob-dist prob-dist)))))
 
@@ -196,17 +200,6 @@
          :mins-since-latest-major-input-change mins-since-latest-major-input-change
          :fill-mins fill-mins}))
 
-(defn target-prob [ctrct time-info cur latest-major-input-change p]
-    (let [{:keys [mins-left]} time-info
-          cur-winner? (and (>= cur (get-in ctrct [:bounds :lower-inclusive]))
-                           (<= cur (get-in ctrct [:bounds :upper-inclusive])))
-          adj-p  (cond
-                    (and (< mins-left 180) (not cur-winner?)) 0
-                    (and (< mins-left 180) cur-winner?) 1
-                    ; TODO: add some decay towards the end
-                    :else p)]
-        adj-p))
-
 (defn get-contract [mkt contract-id]
     (->> mkt
          :contracts
@@ -226,13 +219,9 @@
           price-and-prob-for-contract (fn [[contract-id prob]]
                                         (let [contract (get-contract mkt contract-id)
                                               order-book (get order-books-by-contract-id contract-id)
-                                              adj-p (target-prob contract time-info cur latest-major-input-change prob)
-                                              likely-fill (execution-utils/get-likely-fill fill-mins adj-p order-book)]
+                                              likely-fill (execution-utils/get-likely-fill fill-mins prob order-book)]
                                             (when (some? likely-fill)
-                                                ; TODO: once target-prob logic is folded into earlier prob calculaton, set :prob = (:est-value likely-fill)
-                                                {:prob (if (= (:trade-type likely-fill) :buy-no)
-                                                           (- 1 adj-p)
-                                                           adj-p)
+                                                {:prob (:est-value likely-fill)
                                                  :fill-mins fill-mins
                                                  :trade-type (:trade-type likely-fill)
                                                  :price (:price likely-fill)
@@ -242,7 +231,7 @@
                                          (filter some?)
                                          (into []))]
         (if valid?
-            (port-opt-utils/get-optimal-bets 0.1 contracts-price-and-prob)
+            (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob)
             [])))
 
 (defn update-trades [state strat-state end-chan hurdle-rate]
@@ -320,12 +309,6 @@
             ::maintain-probs-for-mkts
             [:tradable-mkts]
             valid?
-            upd)
-        (utils/add-guarded-watch-in
-            strat-state
-            ::maintain-probs-for-cfg
-            [:dist-by-days]
-            valid?
             upd)))
 
 (defn maintain-major-input-changes [state strat-state end-chan]
@@ -344,14 +327,9 @@
             upd)))
 
 (defn run [cfg state end-chan]
-    (let [{:keys [dist-by-days hurdle-rate]} (::id cfg)
-          dist-by-days (->> dist-by-days
-                            (map (fn [[days dist]]
-                                [days (org.apache.commons.math3.distribution.NormalDistribution. (:mean dist) (:std dist))]))
-                            (into {}))
-          strat-state (l/logging-agent "rcp-strat" (agent {:dist-by-days dist-by-days}))]
-        (when (or (nil? dist-by-days)
-                  (nil? hurdle-rate))
+    (let [{:keys [hurdle-rate]} (::id cfg)
+          strat-state (l/logging-agent "rcp-strat" (agent {}))]
+        (when (nil? hurdle-rate)
             (throw (ex-info "Bad config for rcp strategy" {:cfg (::id cfg)})))
         (maintain-relevant-mkts state strat-state end-chan)
         (maintain-order-books state strat-state end-chan)

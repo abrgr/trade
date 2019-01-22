@@ -20,9 +20,11 @@
                             (filter #(> (count %) 0)) ; non-empty cells
                             first ; first non-empty cell is our approval %
                             (#(.replace % "%" ""))
-                            Integer/parseInt)]
+                            Integer/parseInt)
+          {:keys [end-date]} date]
         (cb {:val approval
-             :date (:end-date date)})))
+             :date end-date
+             :next-expected (u/next-weekday-at end-date u/ny-time 17 0)})))
 
 (defn- check-google-sheet [html cb]
     (let [regex #"https://docs.google.com/spreadsheets/[^\"?]+"
