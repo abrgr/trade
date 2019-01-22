@@ -15,7 +15,7 @@
 (defn merge-deep [& maps]
   (apply merge-with deep-merger maps))
 
-(defn split-first [haystack needle]
+(defn split-first [^String haystack ^String needle]
   (let [idx (.indexOf haystack needle)]
     (if (neg? idx)
       [haystack ""]
@@ -33,7 +33,10 @@
 (defn to-decimal [n]
     (if (nil? n)
       nil
-      (java.math.BigDecimal. n)))
+      (cond
+        (instance? String n) (java.math.BigDecimal. ^String n)
+        (instance? Double n) (java.math.BigDecimal. ^Double n)
+        :else (java.math.BigDecimal. n))))
 
 (defn parse-ext-iso-date
   "E.x. 1986-11-22"
@@ -76,7 +79,7 @@
 
 (defn parse-isoish-datetime
   "E.x. 2018-12-03T11:30:20.00"
-  [s]
+  [^String s]
   (try
     (if (nil? s)
       nil
@@ -122,7 +125,7 @@
         (java.time.format.DateTimeFormatter/ofPattern "MMMM d y")))))
 
 (defn most-recent-month-day
-  [month day]
+  [^Integer month ^Integer day]
   (let [today (java.time.LocalDate/now)
         year (-> today
                  (.get (java.time.temporal.ChronoField/YEAR)))
@@ -141,14 +144,14 @@
      :to (most-recent-month-day to-mon to-day)}))
 
 (defn truncated-to-day
-  [d]
+  [^java.time.ZonedDateTime d]
   (.truncatedTo d java.time.temporal.ChronoUnit/DAYS))
 
 (def weekend-days? #{6 7})
 
 (def ny-time (java.time.ZoneId/of "America/New_York"))
 
-(defn next-weekday-at [local-date tz hour minute]
+(defn next-weekday-at [^java.time.LocalDate local-date ^java.time.ZoneId tz ^Integer hour ^Integer minute]
   (let [tomorrow (-> local-date
                      (.atStartOfDay tz)
                      (.plus 1 java.time.temporal.ChronoUnit/DAYS))

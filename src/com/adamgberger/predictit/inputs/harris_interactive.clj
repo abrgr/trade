@@ -18,7 +18,7 @@
                             first
                             second ; we want the line after NET APPROVE
                             (filter #(> (count %) 0)) ; non-empty cells
-                            first ; first non-empty cell is our approval %
+                            ^String (first) ; first non-empty cell is our approval %
                             (#(.replace % "%" ""))
                             Integer/parseInt)
           {:keys [end-date]} date]
@@ -28,7 +28,7 @@
 
 (defn- check-google-sheet [html cb]
     (let [regex #"https://docs.google.com/spreadsheets/[^\"?]+"
-          url (some-> (re-find regex html)
+          url (some-> ^String (re-find regex html)
                       (.replace "/pubhtml" "/pub?single=true&output=csv"))]
         (if (nil? url)
             (l/log :error "Failed to find spreadsheet url in harris interactive main page")

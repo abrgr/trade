@@ -12,7 +12,7 @@
 
 (defn remove_js
     "They return something like return_json({...the stuff we want})"
-    [s]
+    [^String s]
     (as-> s s
           (.substring s (string/index-of s "{"))
           (.substring s 0 (inc (string/last-index-of s "}")))))
@@ -49,15 +49,15 @@
             :else el)))
 
 (defn recalculate-average [constituents]
-    (let [avg (->> constituents
-                   vals
-                   (reduce
-                       (fn [{:keys [count sum]} {:keys [val]}]
-                            {:count (inc count)
-                            :sum (+ sum val)})
-                       {:count java.math.BigDecimal/ZERO
-                       :sum java.math.BigDecimal/ZERO})
-                   (#(.divide (:sum %) (:count %) (java.math.MathContext. 6 java.math.RoundingMode/HALF_UP))))]
+    (let [^java.math.BigDecimal avg (->> constituents
+                                         vals
+                                         (reduce
+                                             (fn [{:keys [count sum]} {:keys [val]}]
+                                                     {:count (inc count)
+                                                     :sum (+ sum val)})
+                                             {:count java.math.BigDecimal/ZERO
+                                             :sum java.math.BigDecimal/ZERO})
+                                         (#(.divide ^java.math.BigDecimal (:sum %) ^java.math.BigDecimal (:count %) (java.math.MathContext. 6 java.math.RoundingMode/HALF_UP))))]
         {:rounded (.round avg (java.math.MathContext. 3 java.math.RoundingMode/HALF_UP))
          :exact avg}))
 

@@ -347,7 +347,7 @@
                           ords-to-cancel)))
                  ; we want to buy
                  (let [desired-price (:price pos)
-                       still-valid-order? #(< (Math/abs (- (:price %) desired-price)) 0.05)
+                       still-valid-order? #(< (Math/abs (double (- (:price %) desired-price))) 0.05)
                        cur-ords (-> pos
                                     :trade-type
                                     ords-by-trade-type)

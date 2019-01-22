@@ -74,12 +74,12 @@
            (utils/read-json value-fns))))
 
 (defn each-line [is f value-fns continue-monitoring]
-    (let [rdr (io/reader is)]
-        (loop [evt-line (.readLine rdr)
-               data-line (.readLine rdr)]
+    (with-open [^java.io.BufferedReader rdr (io/reader is)]
+        (loop [^String evt-line (.readLine rdr)
+               ^String data-line (.readLine rdr)]
             (let [evt (-> evt-line
                           (utils/split-first ":")
-                          second
+                          ^String (second)
                           .trim
                           .toLowerCase)
                   payload (-> data-line

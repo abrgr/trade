@@ -17,7 +17,7 @@
             msg (merge {:level level :msg msg} extra {:ts ts})]
             (async/>!! log-chan msg))))
 
-(defn ex-log-msg [ex]
+(defn ex-log-msg [^Exception ex]
     {:stack (string/join "  <-  " (.getStackTrace ex))
      :ex-data (ex-data ex)
      :ex-msg (.getMessage ex)

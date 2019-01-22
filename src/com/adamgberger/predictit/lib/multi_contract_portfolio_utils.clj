@@ -19,7 +19,7 @@
             (and result-no?  bet-no?)  (/ 1 (- 1 price)))))
 
 (defn- wager-result [pos result]
-    (let [{:keys [wager price]} pos
+    (let [{:keys [^Double wager]} pos
           b (odds pos result)]
         (* b (Math/abs wager))))
 
@@ -58,12 +58,15 @@
           len (count contracts)
           ; constraints are represented as functions that must be non-negative
           non-neg-constraints (map
-                                (fn [i]
+                                (fn [^Integer i]
                                     (fn [x con]
                                         (aset-double con (inc i) (nth x i))))
                                 (range len))
-          budget-constraint (fn [x con]
-                                (aset-double con 0 (-1 (reduce #(+ %1 (Math/abs %2)) 0.0 x))))
+          budget-constraint (fn [^doubles x ^doubles con]
+                                (aset-double
+                                    con
+                                    0
+                                    (-1 (reduce (fn [^Double sum ^Double val] (+ sum (Math/abs val))) 0.0 x))))
           constraints (conj non-neg-constraints budget-constraint)
           num-constraints (count constraints)
           f (reify Calcfc

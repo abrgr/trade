@@ -13,17 +13,17 @@
         :buy [yn :sell]
         :sell [yn :buy]))
 
-(defn- find-price-for-mins [immediate-price last cur-best mins]
+(defn- find-price-for-mins [^Double immediate-price ^Double last ^Double cur-best ^Integer mins]
     (let [pts (org.apache.commons.math3.fitting.WeightedObservedPoints.)
           fitter (org.apache.commons.math3.fitting.PolynomialCurveFitter/create 2)
-          epsilon 0.01
+          epsilon (double 0.01)
           lower-bound (min cur-best immediate-price)
           upper-bound (max cur-best immediate-price)
           mid (/ (+ cur-best immediate-price) 2)
           last-price (when (some? last)
                         (max lower-bound (min last upper-bound)))
-          xform-y (fn [y] (Math/log (+ (Math/abs (- y immediate-price)) epsilon)))
-          xform-x (fn [x] (Math/log (+ x epsilon)))
+          xform-y (fn ^Double [^Double y] (Math/log (+ (Math/abs (double (- y immediate-price))) epsilon)))
+          xform-x (fn ^Double [^Integer x] (Math/log (+ x epsilon)))
           dir (if (< cur-best immediate-price) - +)
           un-xform-y (fn [y] (dir immediate-price (Math/exp y)))]
         (.add pts 1.0 (xform-x 0) (xform-y immediate-price))
@@ -31,8 +31,9 @@
             (.add pts 2.0 (xform-x 10) (xform-y last-price)))
         (.add pts 0.5 (xform-x 30) (xform-y mid))
         (.add pts 1.0 (xform-x 100) (xform-y cur-best))
-        (let [f (org.apache.commons.math3.analysis.polynomials.PolynomialFunction. (.fit fitter (.toList pts)))]
-            (un-xform-y (.value f (xform-x mins))))))
+        (let [f (org.apache.commons.math3.analysis.polynomials.PolynomialFunction. (.fit fitter (.toList pts)))
+              x (double (xform-x mins))]
+            (un-xform-y (.value f x)))))
 
 (defn- best-price [orders] ; we assume orders is sorted as we want it
     (or (some->> orders

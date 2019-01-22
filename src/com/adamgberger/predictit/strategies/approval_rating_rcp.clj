@@ -14,7 +14,9 @@
 (def confidence (utils/to-decimal "0.8"))
 
 (defn is-relevant-mkt [mkt]
-    (let [n (-> mkt :market-name .toLowerCase)
+    (let [^String n (-> mkt
+                        ^String (:market-name)
+                        .toLowerCase)
           is-open (= (:status mkt) :open)
           is-trump (.contains n "trump")
           is-rcp (.contains n " rcp ")
@@ -82,7 +84,7 @@
     (let [num-match (re-matches #"^.*(\d{1,2})/(\d{1,2})[?]$" m-name)
           str-match (re-matches #"^.*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[.]?\s*(\d+)[?]$" m-name)
           months {"Jan" 1 "Feb" 2 "Mar" 3 "Apr" 4 "May" 5 "Jun" 6 "Jul" 7 "Aug" 8 "Sep" 9 "Oct" 10 "Nov" 11 "Dec" 12}
-          next-md (fn [m d]
+          next-md (fn [^Integer m ^Integer d]
                     (let [today (java.time.LocalDate/now)
                           year (.getYear today)
                           md-this-year (java.time.LocalDate/of year m d)]
@@ -139,7 +141,7 @@
                   updater #(assoc % :tradable-mkts adapted-mkts)]
                 (send strat-state updater)))))
 
-(defn contract-prob-dist [dist approval-rating contracts]
+(defn contract-prob-dist [^org.apache.commons.math3.distribution.AbstractRealDistribution dist contracts]
     (->> contracts
          (map
             (fn [contract]
@@ -151,7 +153,7 @@
                         nil))))
          (into {})))
 
-(defn mkt-prob-dists [dist-by-days tradable-mkts approval-rating]
+(defn mkt-prob-dists [dist-by-days tradable-mkts]
     (->> tradable-mkts
         (map
             (fn [{:keys [market-id end-date contracts]}]
@@ -160,22 +162,22 @@
                                 end-date)
                         dist (get dist-by-days day-count)]
                     (if (some? dist)
-                        [market-id (contract-prob-dist dist approval-rating contracts)]
+                        [market-id (contract-prob-dist dist contracts)]
                         nil))))
         (filter some?)
         (into {})))
 
 (defn update-probs [state strat-state end-chan]
     (l/log :info "Updating RCP probabilities")
-    (let [{:keys [dists-by-day val]} (-> @(:estimates state) rcp-estimate-id)
+    (let [{:keys [dists-by-day]} (-> @(:estimates state) rcp-estimate-id)
           tradable-mkts (:tradable-mkts @strat-state)
           prob-dist (when (and (some? tradable-mkts)
-                               (some? val))
-                          (mkt-prob-dists dists-by-day tradable-mkts val))]
+                               (some? dists-by-day))
+                        (mkt-prob-dists dists-by-day tradable-mkts))]
         (when (some? prob-dist)
             (send strat-state #(assoc % :prob-dist prob-dist)))))
 
-(defn market-time-info [end-date latest-major-input-change]
+(defn market-time-info [^java.time.LocalDate end-date ^java.time.Instant latest-major-input-change]
     (let [end-time (-> end-date
                        (.atTime 23 59) ; TODO: get this from the market
                        (.atZone (java.time.ZoneId/of "America/New_York")))
@@ -310,7 +312,7 @@
     ; TODO: make a decent macro for this
     (letfn [(upd [_]
                 (send strat-state #(assoc % :latest-major-input-change (java.time.Instant/now))))
-            (valid? [old new]
+            (valid? [^java.math.BigDecimal old ^java.math.BigDecimal new]
                 (and (some? new)
                      (and (some? old)
                            (not= (.round old math-ctx) (.round new math-ctx)))))]
