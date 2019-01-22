@@ -51,11 +51,10 @@
                             (map :prob)
                             (reduce + 0.0))
           remaining-prob (- 1 total-prob)
-          added-cash? (> remaining-prob 0.0)
           filtered-contracts (filter
                                 #(> (exp-return %) hurdle-return)
                                 contracts-price-and-prob)
-          contracts (if added-cash?
+          contracts (if (> remaining-prob 0.0)
                         (conj filtered-contracts {:prob remaining-prob :cash? true})
                         filtered-contracts)
           len (count contracts)
@@ -89,7 +88,7 @@
                      (map
                         #(assoc %1 :weight %2)
                         contracts)
-                     (#(if added-cash? (drop-last %) %)) ; remove our filler contract
+                     (filter (comp not :cash?)) ; remove the cash contract we added
                      (into [])))
             (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
                                                               :orig-contracts contracts-price-and-prob
