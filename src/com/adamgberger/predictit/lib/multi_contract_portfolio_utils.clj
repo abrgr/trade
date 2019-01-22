@@ -16,7 +16,7 @@
             (and result-yes? bet-yes?) (/ 1 price)
             (and result-no?  bet-yes?) -1
             (and result-yes? bet-no?)  -1
-            (and result-no?  bet-no?)  (/ 1 (- 1 price)))))
+            (and result-no?  bet-no?)  (/ 1 price))))
 
 (defn- wager-result [pos result]
     (let [{:keys [^Double wager]} pos
@@ -43,6 +43,9 @@
         0.0
         contract-positions))
 
+(defn- exp-return [{:keys [est-value price]}]
+    (/ (- est-value price) price))
+
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
     (let [total-prob (->> contracts-price-and-prob
                             (map :prob)
@@ -50,10 +53,10 @@
           remaining-prob (- 1 total-prob)
           added-cash? (> remaining-prob 0.0)
           filtered-contracts (filter
-                                #(> (+ (* (:prob %) (odds % :yes)) (* (- 1 (:prob %)) (odds % :no))) (+ 1 hurdle-return))
+                                #(> (exp-return %) hurdle-return)
                                 contracts-price-and-prob)
           contracts (if added-cash?
-                        (conj contracts-price-and-prob {:prob remaining-prob :cash? true})
+                        (conj filtered-contracts {:prob remaining-prob :cash? true})
                         filtered-contracts)
           len (count contracts)
           ; constraints are represented as functions that must be non-negative
@@ -66,28 +69,29 @@
                                 (aset-double
                                     con
                                     0
-                                    (-1 (reduce (fn [^Double sum ^Double val] (+ sum (Math/abs val))) 0.0 x))))
+                                    (- 1 (reduce (fn [^Double sum ^Double val] (+ sum (Math/abs val))) 0.0 x))))
           constraints (conj non-neg-constraints budget-constraint)
           num-constraints (count constraints)
           f (reify Calcfc
                 (compute [this n m x con]
-                    (map #(% x con) constraints)
+                    (doseq [constraint constraints] (constraint x con))
                     (* -1 (growth-rate (map #(assoc %1 :wager %2) contracts x)))))
           weights (double-array len (repeat (/ 1.0 len)))
-          rho-start 0.1
+          rho-start 0.5
           rho-end 1.0e-6
-          res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 100000)]
+          res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 1e5)]
         (if (= CobylaExitStatus/NORMAL res)
             (do (l/log :info "Optimized portfolio" {:contracts contracts
                                                     :orig-contracts contracts-price-and-prob
                                                     :weights weights
-                                                    :res res})
+                                                    :opt-result res})
                 (->> weights
                      (map
                         #(assoc %1 :weight %2)
                         contracts)
                      (#(if added-cash? (drop-last %) %)) ; remove our filler contract
                      (into [])))
-            (do (l/log :error "Failed to optimize portfolio" {:contracts-price-and-prob contracts-price-and-prob
+            (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
+                                                              :orig-contracts contracts-price-and-prob
                                                               :opt-result res})
                 []))))

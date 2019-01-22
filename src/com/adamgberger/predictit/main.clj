@@ -263,7 +263,7 @@
 
 (defn desired-pos-for-req-pos [bankroll req-pos]
   {:contract-id (:contract-id req-pos)
-   :target-price (:prob req-pos)
+   :target-price (:est-value req-pos)
    :target-mins (:fill-mins req-pos)
    :trade-type (:trade-type req-pos)
    :price (:price req-pos)

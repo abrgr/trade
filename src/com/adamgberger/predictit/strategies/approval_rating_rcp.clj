@@ -221,7 +221,8 @@
                                               order-book (get order-books-by-contract-id contract-id)
                                               likely-fill (execution-utils/get-likely-fill fill-mins prob order-book)]
                                             (when (some? likely-fill)
-                                                {:prob (:est-value likely-fill)
+                                                {:prob prob
+                                                 :est-value (:est-value likely-fill)
                                                  :fill-mins fill-mins
                                                  :trade-type (:trade-type likely-fill)
                                                  :price (:price likely-fill)
