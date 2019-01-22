@@ -75,12 +75,16 @@
           rho-end 1.0e-6
           res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 100000)]
         (if (= CobylaExitStatus/NORMAL res)
-            (->> weights
-                 (map
-                    #(assoc %1 :weight %2)
-                    contracts)
-                 (#(if added-cash? (drop-last %) %)) ; remove our filler contract
-                 (into []))
+            (do (l/log :info "Optimized portfolio" {:contracts contracts
+                                                    :orig-contracts contracts-price-and-prob
+                                                    :weights weights
+                                                    :res res})
+                (->> weights
+                     (map
+                        #(assoc %1 :weight %2)
+                        contracts)
+                     (#(if added-cash? (drop-last %) %)) ; remove our filler contract
+                     (into [])))
             (do (l/log :error "Failed to optimize portfolio" {:contracts-price-and-prob contracts-price-and-prob
                                                               :opt-result res})
                 []))))

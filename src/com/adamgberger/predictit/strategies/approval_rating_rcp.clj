@@ -145,9 +145,7 @@
             (fn [contract]
                 (let [bounds (:bounds contract)
                       {:keys [lower-inclusive upper-inclusive]} bounds
-                      l (- lower-inclusive approval-rating)
-                      u (- upper-inclusive approval-rating)
-                      pr (some-> dist (.probability l u))]
+                      pr (some-> dist (.probability lower-inclusive upper-inclusive))]
                     (if (some? pr)
                         [(:contract-id contract) pr]
                         nil))))
@@ -236,10 +234,7 @@
 
 (defn update-trades [state strat-state end-chan hurdle-rate]
     (l/with-log :info "Updating trades"
-        (let [ss @strat-state
-              prob-dist (:prob-dist ss)
-              mkts (:tradable-mkts ss)
-              latest-major-input-change (:latest-major-input-change ss)
+        (let [{mkts :tradable-mkts :keys [prob-dist latest-major-input-change]} @strat-state
               cur (get-in @(:estimates state) [rcp-estimate-id :val])
               order-books (get-in @(:venue-state state) [venue-id :order-books])
               get-mkt (fn [mkt-id]
