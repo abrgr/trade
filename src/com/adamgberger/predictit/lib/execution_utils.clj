@@ -59,7 +59,7 @@
             (> (- 1 est-value) no-mid) :buy-no
             :else nil)))
 
-(defn get-likely-fill [mins est-value order-book]
+(defn get-likely-fill [mins est-value order-book mc]
     (let [{:keys [last-price]} order-book
           trade-type (determine-trade-type est-value order-book)]
         (if (and (some? trade-type) (some? order-book))
@@ -95,7 +95,9 @@
                                                        :trade-type trade-type
                                                        :immediate-price immediate-price
                                                        :cur-best cur-best})
-                {:price usable-price
+                {:price (-> usable-price
+                            java.math.BigDecimal.
+                            (.round mc))
                  :est-value our-side-est-value
                  :trade-type trade-type})
             nil)))

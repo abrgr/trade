@@ -7,6 +7,9 @@
 
 (defn- odds [pos result]
     (let [{:keys [price trade-type cash?]} pos
+          price (if (nil? price)
+                    nil
+                    (double price))
           result-yes? (= result :yes)
           result-no? (not result-yes?)
           bet-yes? (or cash? (= trade-type :buy-yes))
@@ -47,13 +50,21 @@
     (/ (- est-value price) price))
 
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
-    (let [total-prob (->> contracts-price-and-prob
-                            (map :prob)
-                            (reduce + 0.0))
+    (let [filtered-contracts (->> contracts-price-and-prob
+                                  (filter #(> (exp-return %) hurdle-return))
+                                  (map
+                                    #(assoc
+                                        %
+                                        :prob
+                                        (-> %
+                                            :prob
+                                            java.math.BigDecimal.
+                                            (.round (java.math.MathContext. 4))
+                                            double))))
+          total-prob (->> filtered-contracts
+                          (map :prob)
+                          (reduce + 0.0))
           remaining-prob (- 1 total-prob)
-          filtered-contracts (filter
-                                #(> (exp-return %) hurdle-return)
-                                contracts-price-and-prob)
           contracts (if (> remaining-prob 0.0)
                         (conj filtered-contracts {:prob remaining-prob :cash? true})
                         filtered-contracts)

@@ -9,7 +9,8 @@
 (def venue-id :com.adamgberger.predictit.venues.predictit/predictit)
 (def rcp-estimate-id :com.adamgberger.predictit.estimators.approval-rating-rcp/id)
 
-(def math-ctx (java.math.MathContext. 1 java.math.RoundingMode/HALF_UP))
+(def rcp-math-ctx (java.math.MathContext. 1 java.math.RoundingMode/HALF_UP))
+(def pricing-math-ctx (java.math.MathContext. 2 java.math.RoundingMode/HALF_UP))
 
 (def confidence (utils/to-decimal "0.8"))
 
@@ -219,7 +220,7 @@
           price-and-prob-for-contract (fn [[contract-id prob]]
                                         (let [contract (get-contract mkt contract-id)
                                               order-book (get order-books-by-contract-id contract-id)
-                                              likely-fill (execution-utils/get-likely-fill fill-mins prob order-book)]
+                                              likely-fill (execution-utils/get-likely-fill fill-mins prob order-book pricing-math-ctx)]
                                             (when (some? likely-fill)
                                                 {:prob prob
                                                  :est-value (:est-value likely-fill)
@@ -316,7 +317,7 @@
             (valid? [^java.math.BigDecimal old ^java.math.BigDecimal new]
                 (and (some? new)
                      (and (some? old)
-                           (not= (.round old math-ctx) (.round new math-ctx)))))]
+                           (not= (.round old rcp-math-ctx) (.round new rcp-math-ctx)))))]
         (utils/add-guarded-watch-in
             (:estimates state)
             ::maintain-major-input-changes
