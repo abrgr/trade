@@ -93,8 +93,37 @@
      :sell-no []}
     orders))
 
+(defn- no-matching-pos [poss {:keys [contract-id]}]
+  (->> poss
+       (filter #(= (:contract-id %) contract-id))
+       empty?))
+
+(defn- current-pos-to-sell [order-books-by-contract-id mins {:keys [contract-id current side avg-price-paid]}]
+  (let [trade-type (sell-trade-type-for-side side)]
+    {:contract-id contract-id
+    :target-price avg-price-paid
+    :target-mins mins
+    :trade-type trade-type
+    :price (:price
+              (exec-utils/get-likely-fill
+                mins
+                avg-price-paid
+                (get order-books-by-contract-id contract-id)
+                (java.math.MathContext. 2)
+                trade-type))
+    :qty 0}))
+
 (defn- adjust-desired-pos-for-actuals [venue-state venue-id mkt-id desired-pos current-pos-by-contract-id outstanding-orders-by-contract-id]
   (->> desired-pos
+       ; generate sells for any position that we no longer have a desired-pos for
+       (concat (->> current-pos-by-contract-id
+                    vals
+                    (filter #(= mkt-id (:market-id %)))
+                    (filter (partial no-matching-pos desired-pos))
+                    (map (partial
+                          current-pos-to-sell
+                          (get-in venue-state [venue-id :order-books mkt-id])
+                          (or (->> desired-pos first :target-mins) 60)))))
        (mapcat
           (fn [pos]
             (let [contract-id (:contract-id pos)
@@ -112,7 +141,7 @@
                   current-holding (* current-qty (:avg-price-paid current))
                   opp-buy (-> desired-side opposite-side buy-trade-type-for-side)
                   desired-side-sell (-> desired-side sell-trade-type-for-side)
-                  desired-price (:price pos)
+                  {desired-price :price desired-qty :qty} pos
                   close-enough-order? #(< (Math/abs (double (- (:price %) desired-price))) 0.05)
                   ords-by-should-cancel (->> pos
                                              :trade-type
@@ -133,7 +162,7 @@
                                (reduce #(+ %1 (* (:price %2) (:qty %2))) 0.0))
                   cur-amt (+ current-holding ord-amt)
                   max-qty (/ (- 850.0 cur-amt) desired-price)
-                  remaining-qty (min max-qty (- (:qty pos) cur-qty ord-qty))
+                  remaining-qty (min max-qty (- desired-qty cur-qty ord-qty))
                   bad-buys-to-cancel (opp-buy ords-by-trade-type)
                   bad-sells-to-cancel (desired-side-sell ords-by-trade-type)
                   order-sell-cur (when (and (> current-qty 0)
@@ -152,9 +181,9 @@
                                         (map
                                             (fn [ord]
                                               {:trade-type :cancel
-                                              :target-price target-price
-                                              :contract-id contract-id
-                                              :order-id (:order-id ord)})
+                                               :target-price target-price
+                                               :contract-id contract-id
+                                               :order-id (:order-id ord)})
                                             bad-buys-to-cancel))
                   order-cancel-sells (when-not (empty? bad-sells-to-cancel)
                                         (map
@@ -176,7 +205,13 @@
                                             :contract-id contract-id
                                             :target-price target-price
                                             :order-id (:order-id ord)})
-                                          old-buys-to-cancel)]
+                                          old-buys-to-cancel)
+                  order-sell-old-pos (when (< desired-qty cur-qty)
+                                        {:trade-type sell-current
+                                         :contract-id contract-id
+                                         :qty (- cur-qty desired-qty)
+                                         :target-price (:price pos) ; TODO: this ain't right but we don't really use this field
+                                         :price (:price pos)})]
               (->>
                 [; we hold something we don't want; sell it
                  order-sell-cur
@@ -187,7 +222,9 @@
                  ; our buy order
                  order-place-buy
                  ; canceling our old orders with bad prices
-                 order-cancel-old-buys]
+                 order-cancel-old-buys
+                 ; sell old positions we no longer want
+                 order-sell-old-pos]
                 flatten
                 (filter some?)
                 (into [])))))))

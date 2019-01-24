@@ -88,19 +88,19 @@
                                         (max
                                             0.01
                                             (cond
-                                                (= trade-type :buy-yes) (max likely-price (* 0.2 our-side-est-value))
-                                                (= trade-type :buy-no) (max likely-price (* 0.2 our-side-est-value))
+                                                (#{:buy-yes :sell-yes} trade-type) (max likely-price (* 0.2 our-side-est-value))
+                                                (#{:buy-no :sell-no} trade-type) (max likely-price (* 0.2 our-side-est-value))
                                                 :else nil)))]
                     (l/log :info "Calculated likely fill" {:likely-price likely-price
-                                                        :usable-price usable-price 
-                                                        :mins mins
-                                                        :est-value est-value
-                                                        :last-price last-price
-                                                        :trade-type trade-type
-                                                        :immediate-price immediate-price
-                                                        :cur-best cur-best})
+                                                           :usable-price usable-price 
+                                                           :mins mins
+                                                           :est-value est-value
+                                                           :last-price last-price
+                                                           :trade-type trade-type
+                                                           :immediate-price immediate-price
+                                                           :cur-best cur-best})
                     {:price (-> usable-price
-                                java.math.BigDecimal.
+                                bigdec
                                 (.round mc))
                     :est-value our-side-est-value
                     :trade-type trade-type})
