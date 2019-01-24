@@ -267,8 +267,20 @@
                      (not= old new)))]
         (utils/add-guarded-watch-in
             (:venue-state state)
-            ::maintain-trades
+            ::maintain-trades-order-books
             [venue-id :order-books]
+            not=
+            upd)
+        (utils/add-guarded-watch-in
+            (:venue-state state)
+            ::maintain-trades-bal
+            [venue-id :bal]
+            not=
+            upd)
+        (utils/add-guarded-watch-in
+            (:venue-state state)
+            ::maintain-trades-pos
+            [venue-id :pos]
             not=
             upd)
         (utils/add-guarded-watch-in

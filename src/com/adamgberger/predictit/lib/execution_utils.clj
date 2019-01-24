@@ -28,8 +28,8 @@
           un-xform-y (fn [y] (dir immediate-price (Math/exp y)))]
         (.add pts 1.0 (xform-x 0) (xform-y immediate-price))
         (when (some? last-price)
-            (.add pts 2.0 (xform-x 10) (xform-y last-price)))
-        (.add pts 0.5 (xform-x 30) (xform-y mid))
+            (.add pts 1.0 (xform-x 10) (xform-y last-price)))
+        (.add pts 1.0 (xform-x 60) (xform-y mid))
         (.add pts 1.0 (xform-x 120) (xform-y cur-best))
         (let [f (org.apache.commons.math3.analysis.polynomials.PolynomialFunction. (.fit fitter (.toList pts)))
               x (double (xform-x mins))]
@@ -59,45 +59,49 @@
             (> (- 1 est-value) no-mid) :buy-no
             :else nil)))
 
-(defn get-likely-fill [mins est-value order-book mc]
-    (let [{:keys [last-price]} order-book
-          trade-type (determine-trade-type est-value order-book)]
-        (if (and (some? trade-type) (some? order-book))
-            (let [keypath (trade-type keypath-by-trade-type)
-                  opp-keypath (other-side-keypath keypath)
-                  our-side-orders (get-in order-book keypath)
-                  opp-side-orders (get-in order-book opp-keypath)
-                  our-side-est-value (if (= trade-type :buy-no)
-                                         (- 1 est-value)
-                                         est-value)
-                  immediate-price (or (best-price our-side-orders)
-                                      (min 0.99 (* our-side-est-value 1.6)))
-                  last-price (if (and (= trade-type :buy-no)
-                                      (some? last-price))
-                                 (- 1 last-price)
-                                 last-price)
-                  cur-best (or (best-price opp-side-orders)
-                               (max (* our-side-est-value 0.6) (or last-price 0.01)))
-                  likely-price (find-price-for-mins immediate-price last-price cur-best mins)
-                  usable-price (min
-                                    our-side-est-value
-                                    (max
-                                        0.01
-                                        (cond
-                                            (= trade-type :buy-yes) (max likely-price (* 0.2 our-side-est-value))
-                                            (= trade-type :buy-no) (max likely-price (* 0.2 our-side-est-value))
-                                            :else nil)))]
-                (l/log :info "Calculated likely fill" {:likely-price likely-price
-                                                       :usable-price usable-price 
-                                                       :mins mins
-                                                       :est-value est-value
-                                                       :last-price last-price
-                                                       :trade-type trade-type
-                                                       :immediate-price immediate-price
-                                                       :cur-best cur-best})
-                {:price (-> usable-price
-                            java.math.BigDecimal.
-                            (.round mc))
-                 :est-value our-side-est-value
-                 :trade-type trade-type})
-            nil)))
+(defn get-likely-fill
+    ([mins est-value order-book mc]
+        (let [{:keys [last-price]} order-book
+              trade-type (determine-trade-type est-value order-book)]
+            (get-likely-fill mins est-value order-book mc trade-type)))
+    ([mins est-value order-book mc trade-type]
+        (let [{:keys [last-price]} order-book]
+            (if (and (some? trade-type) (some? order-book))
+                (let [keypath (trade-type keypath-by-trade-type)
+                    opp-keypath (other-side-keypath keypath)
+                    our-side-orders (get-in order-book keypath)
+                    opp-side-orders (get-in order-book opp-keypath)
+                    our-side-est-value (if (= trade-type :buy-no)
+                                            (- 1 est-value)
+                                            est-value)
+                    immediate-price (or (best-price our-side-orders)
+                                        (min 0.99 (* our-side-est-value 1.6)))
+                    last-price (if (and (= trade-type :buy-no)
+                                        (some? last-price))
+                                    (- 1 last-price)
+                                    last-price)
+                    cur-best (or (best-price opp-side-orders)
+                                (max (* our-side-est-value 0.6) (or last-price 0.01)))
+                    likely-price (find-price-for-mins immediate-price last-price cur-best mins)
+                    usable-price (min
+                                        our-side-est-value
+                                        (max
+                                            0.01
+                                            (cond
+                                                (= trade-type :buy-yes) (max likely-price (* 0.2 our-side-est-value))
+                                                (= trade-type :buy-no) (max likely-price (* 0.2 our-side-est-value))
+                                                :else nil)))]
+                    (l/log :info "Calculated likely fill" {:likely-price likely-price
+                                                        :usable-price usable-price 
+                                                        :mins mins
+                                                        :est-value est-value
+                                                        :last-price last-price
+                                                        :trade-type trade-type
+                                                        :immediate-price immediate-price
+                                                        :cur-best cur-best})
+                    {:price (-> usable-price
+                                java.math.BigDecimal.
+                                (.round mc))
+                    :est-value our-side-est-value
+                    :trade-type trade-type})
+                nil))))
