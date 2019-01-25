@@ -4,7 +4,7 @@
 
 (def actuals-from-desired-args
     {:desired-pos [{:contract-id 13964, :target-price 0.9873487542671151, :target-mins 120.0, :trade-type :buy-no, :price 0.79M, :qty 79.0}
-                   {:contract-id 13961, :target-price 0.8706304594858997, :target-mins 120.0, :trade-type :buy-no, :price 0.64M, :qty 45.0}
+                   {:contract-id 13961, :target-price 0.8706304594858997, :target-mins 120.0, :trade-type :buy-no, :price 0.64M, :qty 4500.0}
                    {:contract-id 13966, :target-price 0.33841908453469954, :target-mins 120.0, :trade-type :buy-yes, :price 0.12M, :qty 47.0}
                    {:contract-id 13963, :target-price 0.22803119453537668, :target-mins 120.0, :trade-type :buy-yes, :price 0.094M, :qty 18.0}],
      :outstanding-orders-by-contract-id {13960 [],
@@ -38,7 +38,7 @@
 
 (def actuals
     (set [{:trade-type :buy-no, :contract-id 13964, :qty 54.0, :target-price 0.9873487542671151, :price 0.79M}
-          {:trade-type :buy-no, :contract-id 13961, :qty 45.0, :target-price 0.8706304594858997, :price 0.64M}
+          {:trade-type :buy-no, :contract-id 13961, :qty 1328.0, :target-price 0.8706304594858997, :price 0.64M}
           {:trade-type :cancel, :target-price 0.33841908453469954, :contract-id 13966, :order-id 23193426}
           {:trade-type :buy-yes, :contract-id 13966, :qty 47.0, :target-price 0.33841908453469954, :price 0.12M}
           {:trade-type :buy-yes, :contract-id 13963, :qty 18.0, :target-price 0.22803119453537668, :price 0.094M}
@@ -55,6 +55,5 @@
                             desired-pos
                             current-pos-by-contract-id
                             outstanding-orders-by-contract-id))]
-            (println adj-pos)
             (is (and (clojure.set/subset? adj-pos actuals)
                      (clojure.set/subset? actuals adj-pos))))))

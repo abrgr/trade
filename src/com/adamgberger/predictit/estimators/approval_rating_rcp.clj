@@ -51,9 +51,9 @@
     (org.apache.commons.math3.distribution.NormalDistribution. (+ est adj-mean) adj-std)))
 
 (defn- dist-for-days [days dist-by-days est primary-sources]
-    (if (= days 0)
-      (dist-for-same-day dist-by-days est primary-sources)
-      (dist-for-future-day days dist-by-days est)))
+  (if (= days 0)
+    (dist-for-same-day dist-by-days est primary-sources)
+    (dist-for-future-day days dist-by-days est)))
 
 (defn- update-est [dist-by-days rcp rasmussen yougov state]
   (when (some? rcp)
@@ -71,8 +71,8 @@
                               with-yougov
                               "Rasmussen Reports"
                               {:val (:val rasmussen)
-                              :start (:date rasmussen)
-                              :end (:date rasmussen)})
+                               :start (:date rasmussen)
+                               :end (:date rasmussen)})
                             with-yougov)
           new-constituents with-rasmussen
           est (-> new-constituents

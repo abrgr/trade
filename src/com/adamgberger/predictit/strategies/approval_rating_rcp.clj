@@ -86,9 +86,10 @@
           str-match (re-matches #"^.*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[.]?\s*(\d+)[?]$" m-name)
           months {"Jan" 1 "Feb" 2 "Mar" 3 "Apr" 4 "May" 5 "Jun" 6 "Jul" 7 "Aug" 8 "Sep" 9 "Oct" 10 "Nov" 11 "Dec" 12}
           next-md (fn [^Integer m ^Integer d]
-                    (let [today (java.time.LocalDate/now)
+                    (let [today (java.time.ZonedDateTime/now utils/ny-time)
                           year (.getYear today)
-                          md-this-year (java.time.LocalDate/of year m d)]
+                          ; TODO: get 23:59 from market
+                          md-this-year (java.time.ZonedDateTime/of year m d 23 59 59 999 utils/ny-time)]
                         (if (>= (compare md-this-year today) 0)
                             md-this-year
                             (.withYear md-this-year (inc year))))) ]
@@ -110,7 +111,7 @@
     (let [end-date (-> mkt :market-name adapt-market-name-to-end-date)
           invalid? (or (some nil? contracts)
                        (nil? end-date)
-                       (< (compare end-date (java.time.LocalDate/now)) 0))]
+                       (< (compare end-date (java.time.ZonedDateTime/now utils/ny-time)) 0))]
         (if invalid?
             (do (l/log :error "Invalid market" {:mkt mkt
                                                 :contracts contracts})
@@ -159,7 +160,7 @@
         (map
             (fn [{:keys [market-id end-date contracts]}]
                 (let [day-count (.between java.time.temporal.ChronoUnit/DAYS
-                                (java.time.LocalDate/now)
+                                (java.time.ZonedDateTime/now utils/ny-time)
                                 end-date)
                         dist (get dist-by-days day-count)]
                     (if (some? dist)
@@ -178,14 +179,11 @@
         (when (some? prob-dist)
             (send strat-state #(assoc % :prob-dist prob-dist)))))
 
-(defn market-time-info [^java.time.LocalDate end-date ^java.time.Instant latest-major-input-change]
-    (let [end-time (-> end-date
-                       (.atTime 23 59) ; TODO: get this from the market
-                       (.atZone (java.time.ZoneId/of "America/New_York")))
-          mins-left (.between
+(defn market-time-info [^java.time.ZonedDateTime end-date ^java.time.Instant latest-major-input-change]
+    (let [mins-left (.between
                         java.time.temporal.ChronoUnit/MINUTES
                         (java.time.ZonedDateTime/now)
-                        end-time)
+                        end-date)
           mins-since-latest-major-input-change (if (nil? latest-major-input-change)
                                                 300
                                                 (.between
@@ -196,7 +194,7 @@
                         (< mins-left 180) 10.0
                         (< mins-since-latest-major-input-change 10) 1.0
                         :else 120.0)]
-        {:end-time end-time
+        {:end-date end-date
          :mins-left mins-left
          :mins-since-latest-major-input-change mins-since-latest-major-input-change
          :fill-mins fill-mins}))
@@ -255,7 +253,7 @@
                                                     p-by-ctrct)})
               trades (->> prob-dist
                           (map get-trades-for-market)
-                          (apply merge))]
+                          (apply merge {}))]
             (send (:venue-state state) #(assoc-in % [venue-id :req-pos ::id] trades)))))
 
 (defn maintain-trades [state strat-state end-chan hurdle-rate]

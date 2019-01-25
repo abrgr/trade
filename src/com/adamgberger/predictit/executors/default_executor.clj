@@ -161,7 +161,7 @@
                   ord-amt (->> still-active-old-buys
                                (reduce #(+ %1 (* (:price %2) (:qty %2))) 0.0))
                   cur-amt (+ current-holding ord-amt)
-                  max-qty (/ (- 850.0 cur-amt) desired-price)
+                  max-qty (Math/floor (/ (- 850.0 cur-amt) desired-price))
                   remaining-qty (min max-qty (- desired-qty cur-qty ord-qty))
                   bad-buys-to-cancel (opp-buy ords-by-trade-type)
                   bad-sells-to-cancel (desired-side-sell ords-by-trade-type)
