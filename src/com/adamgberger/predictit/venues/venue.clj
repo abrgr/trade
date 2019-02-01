@@ -8,4 +8,6 @@
   (positions [venue])
   (contracts [venue market-id full-market-url])
   (orders [venue market-id full-market-url contract-id])
-  (monitor-order-book [venue market-id full-market-url contract-id]))
+  (monitor-order-book [venue market-id full-market-url contract-id])
+  (submit-order [venue mkt-id contract-id trade-type qty price])
+  (cancel-order [mkt-id order-id]))

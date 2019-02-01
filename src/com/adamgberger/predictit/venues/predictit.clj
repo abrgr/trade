@@ -122,14 +122,28 @@
                             {:contract-id (:contractId c)
                              :contract-name (:contractName c)
                              :date-opened (:dateOpened c)
-                             :is-active (:isActive c)
-                             :is-open (:isOpen c)
-                             :is-trading-suspended (:isTradingSuspended c)
+                             :tradable? (and (:isActive c) (:isOpen c) (not (:isTradingSuspended c)))
                              :last-price (:lastTradePrice c)})]
         (->> resp
              :contracts
              (map adapt-contract)
              (into []))))
+
+(defn- -submit-order
+    [venue market-id contract-id trade-type qty price]
+    (let [resp (api/submit-order (:auth venue) market-id contract-id trade-type qty price)
+          order (get-in resp [:order :offer])]
+        {:order-id (:offerId order)
+         :contract-id (:contractId order)
+         :price (:pricePerShare order)
+         :qty (:remainingQuantity order)
+         :trade-type (-> order :tradeType side-by-trade-type)
+         :cancellable? (not (:isProcessed order))
+         :created-at (:dateCreated order)}))
+
+(defn- -cancel-order
+    [venue market-id order-id]
+    (api/cancel-order (:auth venue) market-id order-id))
 
 (def auth-cache-fname ".predictit-auth")
 
@@ -173,4 +187,8 @@
             (monitor-order-book [this market-id market-name contract-id]
                 (-monitor-order-book auth market-id market-name contract-id))
             (orders [this market-id full-market-url contract-id]
-                (-orders auth market-id full-market-url contract-id)))))
+                (-orders auth market-id full-market-url contract-id))
+            (submit-order [venue market-id contract-id trade-type qty price]
+                (-submit-order auth market-id contract-id trade-type qty price))
+            (cancel-order [market-id order-id]
+                (-cancel-order auth market-id order-id)))))
