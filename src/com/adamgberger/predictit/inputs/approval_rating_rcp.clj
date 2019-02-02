@@ -56,7 +56,7 @@
                                                      {:count (inc count)
                                                      :sum (+ sum val)})
                                              {:count java.math.BigDecimal/ZERO
-                                             :sum java.math.BigDecimal/ZERO})
+                                              :sum java.math.BigDecimal/ZERO})
                                          (#(.divide ^java.math.BigDecimal (:sum %) ^java.math.BigDecimal (:count %) (java.math.MathContext. 6 java.math.RoundingMode/HALF_UP))))]
         {:rounded (.round avg (java.math.MathContext. 3 java.math.RoundingMode/HALF_UP))
          :exact avg}))
@@ -69,7 +69,7 @@
                     [src (assoc val :end end)])))
         (filter
             (fn [[src val]]
-                (and (>= (compare (:start val) start-date) 0)
+                (and (>  (compare (:start val) start-date) 0)
                      (<= (compare (:end val) end-date) 0))))
         (filter #(and some?
                       (not= (first %) "RCP Average")
