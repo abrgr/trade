@@ -118,6 +118,7 @@
              :date end-date
              :start-date start-date
              :constituents constituents
+             :valid? valid-constituents?
              :exact (:exact recalculated-avg)})))
 
 (defn get-current [cb]

@@ -57,7 +57,10 @@
 
 (defn- update-est [dist-by-days rcp rasmussen yougov state]
   (when (some? rcp)
-    (let [c (:constituents rcp)
+    (let [{c :constituents
+           valid? valid?
+           rcp-val :val
+           rcp-date :date} rcp
           with-yougov (if (some? yougov)
                         (assoc
                           c
@@ -75,9 +78,11 @@
                                :end (:date rasmussen)})
                             with-yougov)
           new-constituents with-rasmussen
-          est (-> new-constituents
-                  approval-rcp/recalculate-average
-                  :exact)
+          est (if valid?
+                (-> new-constituents
+                    approval-rcp/recalculate-average
+                    :exact)
+                rcp-val) ; there was some problem with a consistency check on recalculating rcp, just use the given value
           ests (->> dist-by-days
                     (map
                       (fn [[days {:keys [mean std]}]]
@@ -89,8 +94,8 @@
                                   {:val est
                                    :dists-by-day ests
                                    :est-at (java.time.Instant/now)
-                                   :date (:date rcp)
-                                   :diff (- est (:val rcp))})))))
+                                   :date rcp-date
+                                   :diff (- est rcp-val)})))))
 
 (defn run [cfg state end-chan]
   (l/log :info "Starting RCP approval estimator")
