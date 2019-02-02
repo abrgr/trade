@@ -281,7 +281,7 @@
   [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [contract-id]}]
   (let [{:keys [cancellable? qty price]} (get orders-by-contract-id contract-id)
         permitted? cancellable?
-        bp-effect (* qty price)]
+        bp-effect (if permitted? (* qty price) 0)]
     {:permitted? permitted?
      :buying-power (+ bp bp-effect)}))
 (defmethod trade-policy :buy
@@ -294,7 +294,7 @@
                         (:tradable? contract)
                         (> new-bp 0))]
     {:permitted? permitted?
-     :buying-power new-bp}))
+     :buying-power (if permitted? new-bp bp)}))
 (defmethod trade-policy :sell
   [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [contract-id]}]
   (let [{:keys [tradable?]} (get pos-by-contract-id contract-id)
