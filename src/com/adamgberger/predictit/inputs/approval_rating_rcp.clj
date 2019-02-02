@@ -10,6 +10,8 @@
 
 (def id ::id)
 
+(def hist ::hist)
+
 (defn remove_js
     "They return something like return_json({...the stuff we want})"
     [^String s]
@@ -17,24 +19,23 @@
           (.substring s (string/index-of s "{"))
           (.substring s 0 (inc (string/last-index-of s "}")))))
 
-(defn- get-raw []
+(defn- get-raw [cb cb-err]
     (let [browser-url "https://www.realclearpolitics.com/epolls/other/president_trump_job_approval-6179.html"
           json-url "https://www.realclearpolitics.com/epolls/json/6179_historical.js?1546273265398&callback=return_json"
           value-fns {:date (comp utils/truncated-to-day utils/parse-rfc1123-datetime)
                      :value utils/to-decimal}]
-        (j/get-json browser-url json-url value-fns remove_js)))
+        (j/async-get-json browser-url json-url value-fns remove_js cb cb-err)))
 
-(defn- to-canonical [item]
-    (let [candidates (:candidate item)
-          approve (->> candidates
+(defn- to-canonical [{candidates :candidate, date :date}]
+    (let [approve (->> candidates
                        (filter #(= (:name %) "Approve"))
                        first)
           disapprove (->> candidates
                           (filter #(= (:name %) "Disapprove"))
                           first)]
-        {:date (:date item)
+        {:date date
          :approval (:value approve)
-         :disapproval (:value approve)
+         :disapproval (:value disapprove)
          :audience :all}))
 
 (defn- extract-content [el]
@@ -128,19 +129,23 @@
         #(extract-current (:body %) cb)
         #(l/log :error "Failed to get RCP approval" (l/ex-log-msg %))))
 
-; TODO: this is just preserved here for now.  Used to be the way we got current before we needed constituents
 (defn get-hist
     "Returns something like:
-     {:current {:date #inst 2018-12-31
-                :approval 42.3
-                :disapproval 57.7
-                :audience :all}
+     {:vals [{:date #inst 2018-12-31
+              :approval 42.3
+              :disapproval 57.7
+              :audience :all} ...]
       :retrieved-at #inst 2018-12-31T10:51:01.000Z}"
-    ([current-date]
+    ([cb]
         (l/with-log :debug "Retrieving RCP trump approval ratings"
-            (let [raw (get-raw)
-                  retrieved-at (java.time.Instant/now)
-                  tgt (utils/truncated-to-day current-date)
-                  val (utils/glb-key (-> raw :poll :rcp_avg) tgt :date)]
-                {:current (some-> val to-canonical)
-                 :retrieved-at retrieved-at}))))
+            (get-raw
+                #(let [raw %
+                       retrieved-at (java.time.Instant/now)
+                       hist-vals (->> raw
+                                      :poll
+                                      :rcp_avg
+                                      (map to-canonical)
+                                      (into []))]
+                    (cb {:vals hist-vals
+                         :retrieved-at retrieved-at}))
+                #(l/log :error "Failed to get historical RCP" (l/ex-log-msg %))))))

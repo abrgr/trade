@@ -23,6 +23,7 @@
 
 (def inputs
     {approval-rcp/id approval-rcp/get-current
+     approval-rcp/hist  approval-rcp/get-hist
      approval-rasmussen/id approval-rasmussen/get-current
      approval-yougov-weekly-registered/id approval-yougov-weekly-registered/get-current
      ;approval-harris-interactive/id approval-harris-interactive/get-current
