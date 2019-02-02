@@ -11,8 +11,8 @@
 
 (defn async-get-json
     ([browser-url url value-fns cb cb-err]
-        (get-json browser-url url value-fns identity cb cb-err))
-    ([browser-url url value-fns raw-xform cb]
+        (async-get-json browser-url url value-fns identity cb cb-err))
+    ([browser-url url value-fns raw-xform cb cb-err]
         (let [opts {:async? true
                     :connection-manager cm
                     :headers {"User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36"

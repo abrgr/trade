@@ -78,7 +78,7 @@
 (defn- update-est [stats-for-days rcp rcp-hist rasmussen yougov state]
   (when (and (some? rcp) (some? rcp-hist))
     (let [{c :constituents
-           valid? valid?
+           valid? :valid?
            rcp-val :val
            rcp-date :date} rcp
           with-yougov (if (some? yougov)
