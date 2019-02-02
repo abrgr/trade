@@ -5,6 +5,7 @@
             [com.adamgberger.predictit.inputs.approval-rating-rcp :as approval-rcp]
             [com.adamgberger.predictit.inputs.rasmussen :as approval-rasmussen]
             [com.adamgberger.predictit.inputs.yougov-weekly-registered :as approval-yougov-weekly-registered])
+  (:import (org.apache.commons.math3.stat.descriptive DescriptiveStatistics))
   (:gen-class))
 
 (def id ::id)
@@ -55,8 +56,27 @@
     (dist-for-same-day dist-by-days est primary-sources)
     (dist-for-future-day days dist-by-days est)))
 
-(defn- update-est [dist-by-days rcp rasmussen yougov state]
-  (when (some? rcp)
+(defn- calc-dist-by-day
+  [vals days]
+  (let [^DescriptiveStatistics desc (->> (partition days 1 vals)
+                                         (map
+                                            #(- (-> % first :approval) (-> % last :approval)))
+                                         doubles
+                                         DescriptiveStatistics.)]
+    {:mean (.getMean desc)
+     :std (.getStandardDeviation desc)}))
+
+(defn- calc-dist-by-days
+  [stats-for-days {:keys [vals]} days]
+  (let [vs (->> vals (take stats-for-days) (into []))]
+    (->> (range 1 (inc days))
+        (map
+            (fn [d]
+              [d (calc-dist-by-day vs d)]))
+        (into {}))))
+
+(defn- update-est [stats-for-days rcp rcp-hist rasmussen yougov state]
+  (when (and (some? rcp) (some? rcp-hist))
     (let [{c :constituents
            valid? valid?
            rcp-val :val
@@ -83,6 +103,7 @@
                     approval-rcp/recalculate-average
                     :exact)
                 rcp-val) ; there was some problem with a consistency check on recalculating rcp, just use the given value
+          dist-by-days (calc-dist-by-days stats-for-days rcp-hist 7)
           ests (->> dist-by-days
                     (map
                       (fn [[days {:keys [mean std]}]]
@@ -101,20 +122,21 @@
   (l/log :info "Starting RCP approval estimator")
   (let [c (async/chan)
         our-cfg (::id cfg)
-        {:keys [dist-by-days]} our-cfg]
-    (when (nil? dist-by-days)
+        {:keys [stats-for-days]} our-cfg]
+    (when (nil? stats-for-days)
       (throw (ex-info "Bad config for rcp estimator" {:cfg our-cfg})))
     (async/go-loop []
-      (let [[[rcp rasmussen yougov] ch] (async/alts! [c end-chan])]
+      (let [[[rcp rcp-hist rasmussen yougov] ch] (async/alts! [c end-chan])]
             ; TODO: add some checks to make sure we don't overwrite a good value (basically, check our other inputs)
         (if (= ch end-chan)
           (l/log :warn "Stopping RCP approval estimator")
-          (do (update-est dist-by-days rcp rasmussen yougov state)
+          (do (update-est stats-for-days rcp-hist rcp rasmussen yougov state)
               (recur)))))
     (utils/add-guarded-watch-ins
         (:inputs state)
         ::run
         [[approval-rcp/id]
+         [approval-rcp/hist]
          [approval-rasmussen/id]
          [approval-yougov-weekly-registered/id]]
         #(and (not= %1 %2) (some? %2))
