@@ -58,22 +58,29 @@
 
 (defn- calc-dist-by-day
   [vals days]
-  (let [^DescriptiveStatistics desc (->> (partition days 1 vals)
+  (let [^DescriptiveStatistics desc (->> (partition (inc days) 1 vals)
                                          (map
                                             #(- (-> % first :approval) (-> % last :approval)))
-                                         doubles
+                                         double-array
                                          DescriptiveStatistics.)]
     {:mean (.getMean desc)
      :std (.getStandardDeviation desc)}))
 
 (defn- calc-dist-by-days
   [stats-for-days {:keys [vals]} days]
-  (let [vs (->> vals (take stats-for-days) (into []))]
-    (->> (range 1 (inc days))
-        (map
-            (fn [d]
-              [d (calc-dist-by-day vs d)]))
-        (into {}))))
+  (let [vs (->> vals (take stats-for-days) (into []))
+        dists (->> (range 1 (inc days))
+                   (map
+                      (fn [d]
+                        [d (calc-dist-by-day vs d)]))
+                   (into {}))
+        {mean-1 :mean std-1 :std} (get dists 1)]
+    ; TODO: this is really how I'm trading??
+    (assoc
+      dists
+      0
+      {:mean (* mean-1 0.75)
+       :std (* std-1 0.75)})))
 
 (defn- update-est [stats-for-days rcp rcp-hist rasmussen yougov state]
   (when (and (some? rcp) (some? rcp-hist))
@@ -130,7 +137,7 @@
             ; TODO: add some checks to make sure we don't overwrite a good value (basically, check our other inputs)
         (if (= ch end-chan)
           (l/log :warn "Stopping RCP approval estimator")
-          (do (update-est stats-for-days rcp-hist rcp rasmussen yougov state)
+          (do (update-est stats-for-days rcp rcp-hist rasmussen yougov state)
               (recur)))))
     (utils/add-guarded-watch-ins
         (:inputs state)
