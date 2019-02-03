@@ -144,7 +144,7 @@
      :to (most-recent-month-day to-mon to-day)}))
 
 (defn truncated-to-day
-  [^java.time.ZonedDateTime d]
+  [d]
   (.truncatedTo d java.time.temporal.ChronoUnit/DAYS))
 
 (def weekend-days? #{6 7})

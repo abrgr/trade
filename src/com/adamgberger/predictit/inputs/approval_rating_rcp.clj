@@ -26,7 +26,7 @@
                      :value utils/to-decimal}]
         (j/async-get-json browser-url json-url value-fns remove_js cb cb-err)))
 
-(defn- to-canonical [{candidates :candidate, date :date}]
+(defn to-canonical [{candidates :candidate, date :date}]
     (let [approve (->> candidates
                        (filter #(= (:name %) "Approve"))
                        first)
