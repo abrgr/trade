@@ -230,8 +230,8 @@
                            (merge (json-req))
                            (merge (with-auth auth)))
             params {:headers headers
-                    :form-params {:quantity quantity
-                                  :pricePerShare price
+                    :form-params {:quantity (int quantity)
+                                  :pricePerShare (int (* 100 price))
                                   :contractId contract-id
                                   :tradeType (trade-type numeric-trade-types)}}
             resp (http-post (predictit-api-url "/Trade/SubmitTrade") params)]

@@ -190,5 +190,5 @@
                 (-orders auth market-id full-market-url contract-id))
             (submit-order [venue market-id contract-id trade-type qty price]
                 (-submit-order auth market-id contract-id trade-type qty price))
-            (cancel-order [market-id order-id]
+            (cancel-order [venue market-id order-id]
                 (-cancel-order auth market-id order-id)))))

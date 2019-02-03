@@ -102,19 +102,21 @@
        empty?))
 
 (defn- current-pos-to-sell [order-books-by-contract-id mins {:keys [contract-id current side avg-price-paid]}]
-  (let [trade-type (sell-trade-type-for-side side)]
-    {:contract-id contract-id
-    :target-price avg-price-paid
-    :target-mins mins
-    :trade-type trade-type
-    :price (:price
-              (exec-utils/get-likely-fill
-                mins
-                avg-price-paid
-                (get order-books-by-contract-id contract-id)
-                (java.math.MathContext. 2)
-                trade-type))
-    :qty 0}))
+  (let [trade-type (sell-trade-type-for-side side)
+        {:keys [price]} (exec-utils/get-likely-fill
+                          mins
+                          avg-price-paid
+                          (get order-books-by-contract-id contract-id)
+                          (java.math.MathContext. 2)
+                          trade-type)]
+    (if (nil? price)
+      nil
+      {:contract-id contract-id
+       :target-price avg-price-paid
+       :target-mins mins
+       :trade-type trade-type
+       :price price
+       :qty 0})))
 
 (defn- adjust-desired-pos-for-actuals [venue-state venue-id mkt-id desired-pos current-pos-by-contract-id outstanding-orders-by-contract-id]
   (->> desired-pos
@@ -126,7 +128,8 @@
                     (map (partial
                           current-pos-to-sell
                           (get-in venue-state [venue-id :order-books mkt-id])
-                          (or (->> desired-pos first :target-mins) 60)))))
+                          (or (->> desired-pos first :target-mins) 60)))
+                    (filter some?)))
        (mapcat
           (fn [pos]
             (let [contract-id (:contract-id pos)
@@ -255,19 +258,18 @@
          :current strat-pos-investment
          :cash (max 0.0 (- desired strat-pos-investment))}))))
 
-(defmulti submit-for-execution (fn [mkt-id {:keys [trade-type]}]
+(defmulti submit-for-execution (fn [venue mkt-id {:keys [trade-type]}]
   (if (= :cancel trade-type)
     :cancel
     :trade)))
 (defmethod submit-for-execution :cancel
-  [mkt-id {:keys [order-id]}]
-  (v/cancel-order mkt-id order-id)
+  [venue mkt-id {:keys [order-id]}]
+  (v/cancel-order venue mkt-id order-id)
   {:cancelled order-id})
 (defmethod submit-for-execution :trade
-  [mkt-id {:keys [contract-id trade-type qty price]}]
-  (l/log :info "submit trade" {:contract-id contract-id :trade-type trade-type :qty qty :price price})
-  {:submitted {:order-id 234, :market-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price}})
-  ;{:submitted (v/submit-order mkt-id contract-id trade-type qty price)})
+  [venue mkt-id {:keys [contract-id trade-type qty price]}]
+  (l/log :info "submit trade" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
+  {:submitted (v/submit-order venue mkt-id contract-id trade-type qty price)})
 
 (defmulti trade-policy (fn [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [trade-type]}]
   (case trade-type
@@ -305,7 +307,11 @@
 (defn execute-trades [state end-chan venue-id req-pos-by-strat-id]
   (l/with-log :info "Executing trades"
     (let [venue-state @(:venue-state state)
-          {:keys [cfg]} state]
+          {:keys [cfg]} state
+          venue (->> state
+                    :venues
+                    (filter #(= venue-id (v/id %)))
+                    first)]
       (doseq [[strat-id req-positions-by-mkt-id] req-pos-by-strat-id]
         (let [outstanding-orders-by-contract-id-by-mkt-id (outstanding-orders-for-strat state venue-id venue-state strat-id)]
           (doseq [[mkt-id req-positions] req-positions-by-mkt-id]
@@ -358,7 +364,7 @@
                                           {:trades []
                                            :bp bal} ; TODO: reduce by outstanding orders
                                           trades-to-submit)
-                      orders (map (partial submit-for-execution mkt-id) (:trades trades-can-submit))
+                      orders (map (partial submit-for-execution venue mkt-id) (:trades trades-can-submit))
                       to-remove (->> orders
                                      (map :cancelled)
                                      (filter some?)
