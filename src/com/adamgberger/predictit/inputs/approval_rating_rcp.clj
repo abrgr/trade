@@ -70,7 +70,7 @@
                     [src (assoc val :end end)])))
         (filter
             (fn [[src val]]
-                (and (>  (compare (:start val) start-date) 0)
+                (and (>=  (compare (:start val) start-date) 0)
                      (<= (compare (:end val) end-date) 0))))
         (filter #(and some?
                       (not= (first %) "RCP Average")
@@ -79,7 +79,9 @@
 
 (defn- extract-current [html cb]
     (let [p (-> html m/parse m/as-hickory)
-          rows (s/select (s/child (s/descendant (s/id :polling-data-full)
+          ; Must use polling-data-rcp instead of polling-data-full because there is no rhyme or reason
+          ; to what is included in the average.  The date filtering in get-constituents is bs.
+          rows (s/select (s/child (s/descendant (s/id :polling-data-rcp)
                                                 (s/and (s/class :data)
                                                        (s/tag :table))
                                                 (s/tag :tr)))
