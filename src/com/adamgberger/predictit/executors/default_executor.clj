@@ -129,7 +129,6 @@
                           (or (->> desired-pos first :target-mins) 60)))))
        (mapcat
           (fn [pos]
-            (l/log :info "POS" {:pos pos})
             (let [contract-id (:contract-id pos)
                   desired-side (->> pos :trade-type side-for-trade-type)
                   current (or (get current-pos-by-contract-id contract-id)
@@ -320,7 +319,7 @@
                   outstanding-orders-by-contract-id (get outstanding-orders-by-contract-id-by-mkt-id mkt-id)]
               (if (nil? bankroll)
                 nil
-                (let [contracts-by-id (get-in venue-state [:contracts mkt-id])
+                (let [contracts-by-id (get-in venue-state [venue-id :contracts mkt-id])
                       desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
                       pos-by-contract-id (->> venue-state
                                               venue-id
@@ -331,8 +330,6 @@
                                                   (assoc by-id (:contract-id c) c))
                                                 {}))
                       trades (adjust-desired-pos-for-actuals venue-state venue-id mkt-id desired-pos pos-by-contract-id outstanding-orders-by-contract-id)
-                      _ (l/log :info "Adjusted" {:adjusted trades
-                                                 :orig desired-pos})
                       trades-by-contract (reduce
                                           (fn [by-contract {:keys [contract-id] :as trade}]
                                             (update by-contract contract-id #(conj % trade)))
@@ -350,7 +347,6 @@
                       trades-to-submit (mapcat trades-to-execute-immediately trades-by-contract)
                       trades-can-submit (reduce
                                           (fn [{:keys [trades bp] :as state} trade]
-                                            (l/log :info "Checking policy" {:trade trade, :trades trades, :bp bp})
                                             (let [{:keys [permitted? buying-power]} (trade-policy bp mkt contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
                                               (if permitted?
                                                 {:trades (conj trades trade)
@@ -362,7 +358,7 @@
                                           {:trades []
                                            :bp bal} ; TODO: reduce by outstanding orders
                                           trades-to-submit)
-                      orders (submit-for-execution mkt-id trades-can-submit)
+                      orders (map (partial submit-for-execution mkt-id) (:trades trades-can-submit))
                       to-remove (->> orders
                                      (map :cancelled)
                                      (filter some?)
@@ -376,10 +372,15 @@
                       (update-in
                         s
                         [venue-id :orders mkt-id]
-                        #(->> %
-                              (filter (fn [o] (->> o :order-id to-remove not)))
-                              (concat to-add)
-                              (into [])))))
+                        (fn [contract-ids-and-orders]
+                          (->> contract-ids-and-orders
+                               (map
+                                (fn [[contract-id os]]
+                                  [contract-id
+                                   (concat
+                                    (filter #(->> % :order-id to-remove not) os)
+                                    (filter #(= (:contract-id %) contract-id) to-add))]))
+                               (into {}))))))
                   (l/log :info "Trades" {:desired-pos desired-pos
                                          :pos-by-contract-id pos-by-contract-id
                                          :outstanding-orders-by-contract-id outstanding-orders-by-contract-id

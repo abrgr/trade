@@ -33,9 +33,9 @@
 (defn- -positions
     [venue]
     (let [portfolio (api/get-positions (:auth venue))
-          adapt-contract (fn [c]
+          adapt-contract (fn [mkt-id c]
                             {:contract-id (:contractId c)
-                             :market-id (:marketId c)
+                             :market-id mkt-id
                              :tradable? (and (:contractIsOpen c) (:contractIsActive c))
                              :side (-> c
                                        :userPrediction
@@ -48,11 +48,11 @@
                              :orders {
                                  :buy (:userOpenOrdersBuyQuantity c)
                                  :sell (:userOpenOrdersSellQuantity c)}})
-          adapt-pos (fn [mkt]
-                        {:market-id (:marketId mkt)
+          adapt-pos (fn [{mkt-id :marketId :as mkt}]
+                        {:market-id mkt-id
                          :contracts (->> mkt
                                          :marketContracts
-                                         (map adapt-contract)
+                                         (map (partial adapt-contract mkt-id))
                                          (into []))})]
         (->> portfolio
              :positions
