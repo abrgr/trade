@@ -49,7 +49,7 @@
 (defn- exp-return [{:keys [est-value price]}]
     (/ (- est-value price) price))
 
-(defn get-optimal-bets [hurdle-return contracts-price-and-prob]
+(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob remaining-attempts]
     (let [filtered-contracts (->> contracts-price-and-prob
                                   (filter #(> (exp-return %) hurdle-return))
                                   (map
@@ -86,7 +86,7 @@
                 (compute [this n m x con]
                     (doseq [constraint constraints] (constraint x con))
                     (* -1 (growth-rate (map #(assoc %1 :wager %2) contracts x)))))
-          weights (double-array len (repeat (/ 1.0 len)))
+          weights (double-array len (map (fn [_] (rand)) (range len)))
           rho-start 0.5
           rho-end 1.0e-6
           res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 1e5)]
@@ -104,4 +104,10 @@
             (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
                                                               :orig-contracts contracts-price-and-prob
                                                               :opt-result res})
-                []))))
+                (if (> remaining-attempts 0)
+                    ; we may get diverging rounding errors for some initial weights, try again with new random weights
+                    (-get-optimal-bets hurdle-return contracts-price-and-prob (dec remaining-attempts))
+                    [])))))
+
+(defn get-optimal-bets [hurdle-return contracts-price-and-prob]
+    (-get-optimal-bets hurdle-return contracts-price-and-prob 5))
