@@ -13,6 +13,60 @@
 (defn get-available-markets-chan [venue]
   (async/thread (v/available-markets venue)))
 
+(defn pos-needing-orders [venue-state venue-id pos]
+  (->> pos
+       (filter
+        (fn [{:keys [orders]}]
+          (some (partial < 0) (vals orders))))
+       (filter
+        (fn [{:keys [market-id contract-id] {:keys [buy sell]} :orders}]
+          (let [orders (get-in venue-state [venue-id :orders market-id contract-id :orders])
+                buy-orders (filter #(some #{:buy-yes :buy-no} (:trade-type %)))
+                sell-orders (filter #(some #{:sell-yes :sell-no} (:trade-type %)))
+                qty-sum #(+ %1 (:qty %2))
+                total-buys (reduce qty-sum 0 buy-orders)
+                total-sells (reduce qty-sum 0 sell-orders)]
+            (and (= total-buys buy)
+                 (= total-sells sell)))))))
+
+(defn get-mkt [venue-state venue-id mkt-id]
+  (->> venue-state
+       venue-id
+       :mkts
+       (filter #(= (:market-id %) mkt-id))
+       first))
+
+(defn update-orders [state venue]
+  (let [venue-state @(:venue-state state)
+        venue-id (v/id venue)
+        pos (get-in venue-state [venue-id :pos])
+        pos-to-update (pos-needing-orders venue-state venue-id pos)]
+    (doseq [{:keys [market-id contracts]} pos-to-update
+            {:keys [contract-id]} contracts]
+      (let [{:keys [market-name]} (get-mkt venue-state venue-id market-id)]
+        (if (some? market-name)
+          (let [orders (v/orders venue market-id market-name contract-id)]
+            (send
+              (:venue-state state)
+              #(assoc-in % [venue-id :orders market-id contract-id] {:valid? true :orders orders})))
+          (send
+            (:venue-state state)
+            #(assoc-in % [venue-id :orders market-id contract-id] {:valid? false :orders []})))))))
+
+; TODO: updates to :pos should potentially invalidate their corresponding order entry
+(defn maintain-orders [state end-chan]
+  (doseq [venue (:venues state)
+          :let [venue-id (v/id venue)]]
+    (utils/add-guarded-watch-ins
+        (:venue-state state)
+        ::maintain-orders
+        [[venue-id :pos]
+         [venue-id :mkts]]
+        (fn [[old-pos old-mkts] [new-pos new-mkts]]
+          (or (not= old-pos new-pos)
+              (not= old-mkts new-mkts)))
+        (fn [_] (update-orders state venue)))))
+
 (defn maintain-venue-state [key interval-ms updater state end-chan]
   ; we kick off a go-routine that updates each venue's state
   ; at key with the result of (updater venue)
@@ -38,8 +92,9 @@
   ; and updates venue-state with the results.
 
   (letfn [(get-mkts [venue]
-            (let [mkts (v/available-markets venue)]
-              (l/log :info "Found markets for venue" {:venue-id (v/id venue)
+            (let [venue-id (v/id venue)
+                  mkts (v/available-markets venue)]
+              (l/log :info "Found markets for venue" {:venue-id venue-id
                                                       :market-count (count mkts)})
               mkts))]
     (maintain-venue-state :mkts 600000 get-mkts state end-chan)))
@@ -219,6 +274,7 @@
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
     (maintain-order-books state end-chan)
+    (maintain-orders state end-chan)
     (estimators/start-all (:estimators cfg) state end-chan)
     (inputs/start-all state end-chan)
     (state-watchdog state end-chan)
