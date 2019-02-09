@@ -18,44 +18,6 @@
        (map #(* (:qty %) (:avg-price-paid %)))
        (reduce + 0.0)))
 
-(defn- get-orders [state venue-id venue-state mkt-id]
-  (let [venue (->> state
-                   :venues
-                   (filter #(= (v/id %) venue-id))
-                   first)
-        contract-ids (-> venue-state
-                         venue-id
-                         :contracts
-                         (get mkt-id)
-                         keys)
-        mkt-name (->> venue-state
-                      venue-id
-                      :mkts
-                      (filter #(= (:market-id %) mkt-id))
-                      first
-                      :market-name)
-        orders-by-contract-id (->> contract-ids
-                                   (map
-                                     (fn [contract-id]
-                                       [contract-id (v/orders venue mkt-id mkt-name contract-id)]))
-                                   (into {}))]
-    (send (:venue-state state) #(assoc-in % [venue-id :orders mkt-id] orders-by-contract-id))
-    orders-by-contract-id))
-
-(defn- outstanding-orders-for-strat [state venue-id venue-state strat-id]
-  (let [mkt-ids (mkt-ids-for-strat venue-state venue-id strat-id)
-        orders-by-mkt-id (map
-                          (fn [mkt-id] [mkt-id (get-in venue-state [venue-id :orders mkt-id])])
-                          mkt-ids)]
-    (->> orders-by-mkt-id
-         (map
-          (fn [[mkt-id orders]]
-            [mkt-id
-             (if (nil? orders)
-                (get-orders state venue-id venue-state mkt-id)
-                orders)]))
-         (into {}))))
-
 (defn- desired-pos-for-req-pos [bankroll req-pos]
   {:contract-id (:contract-id req-pos)
    :target-price (:est-value req-pos)
@@ -264,11 +226,12 @@
     :trade)))
 (defmethod submit-for-execution :cancel
   [venue mkt-id {:keys [order-id]}]
+  (l/log :info "Cancelling order" {:mkt-id mkt-id :order-id order-id})
   (v/cancel-order venue mkt-id order-id)
   {:cancelled order-id})
 (defmethod submit-for-execution :trade
   [venue mkt-id {:keys [contract-id trade-type qty price]}]
-  (l/log :info "submit trade" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
+  (l/log :info "Submitting order" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
   {:submitted (v/submit-order venue mkt-id contract-id trade-type qty price)})
 
 (defmulti trade-policy (fn [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [trade-type]}]
@@ -313,82 +276,98 @@
                     (filter #(= venue-id (v/id %)))
                     first)]
       (doseq [[strat-id req-positions-by-mkt-id] req-pos-by-strat-id]
-        (let [outstanding-orders-by-contract-id-by-mkt-id (outstanding-orders-for-strat state venue-id venue-state strat-id)]
-          (doseq [[mkt-id req-positions] req-positions-by-mkt-id]
-            (let [mkt (->> venue-state
-                           venue-id
-                           :mkts
-                           (filter #(= mkt-id (:market-id %)))
-                           first)
-                  {:keys [bal]} (venue-id venue-state)
-                  bankroll (strat-bankroll venue-state cfg strat-id venue-id)
-                  outstanding-orders-by-contract-id (get outstanding-orders-by-contract-id-by-mkt-id mkt-id)]
-              (if (nil? bankroll)
-                nil
-                (let [contracts-by-id (get-in venue-state [venue-id :contracts mkt-id])
-                      desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
-                      pos-by-contract-id (->> venue-state
-                                              venue-id
-                                              :pos
-                                              (mapcat :contracts)
-                                              (reduce
-                                                (fn [by-id c]
-                                                  (assoc by-id (:contract-id c) c))
-                                                {}))
-                      trades (adjust-desired-pos-for-actuals venue-state venue-id mkt-id desired-pos pos-by-contract-id outstanding-orders-by-contract-id)
-                      trades-by-contract (reduce
-                                          (fn [by-contract {:keys [contract-id] :as trade}]
-                                            (update by-contract contract-id #(conj % trade)))
-                                          {}
-                                          trades)
-                      trades-of-types (fn [is-type? trades]
-                                        (filter #(is-type? (:trade-type %)) trades))
-                      trades-to-execute-immediately (fn [[contract-id trades]]
-                                                      (let [non-buys (trades-of-types (comp not buy-types) trades)
-                                                            buys (trades-of-types buy-types trades)
-                                                            allow-buys? (empty? non-buys)]
-                                                        (if allow-buys?
-                                                          buys
-                                                          non-buys)))
-                      trades-to-submit (mapcat trades-to-execute-immediately trades-by-contract)
-                      trades-can-submit (reduce
-                                          (fn [{:keys [trades bp] :as state} trade]
-                                            (let [{:keys [permitted? buying-power]} (trade-policy bp mkt contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
-                                              (if permitted?
-                                                {:trades (conj trades trade)
-                                                 :bp buying-power}
-                                                (do (l/log :warn "Trade out of policy" {:trade trade
-                                                                                        :bp bp
-                                                                                        :trades trades})
-                                                    state))))
-                                          {:trades []
-                                           :bp bal} ; TODO: reduce by outstanding orders
-                                          trades-to-submit)
-                      orders (map (partial submit-for-execution venue mkt-id) (:trades trades-can-submit))
-                      to-remove (->> orders
-                                     (map :cancelled)
-                                     (filter some?)
-                                     (into #{}))
-                      to-add (->> orders
-                                  (map :submitted)
-                                  (filter some?))]
-                  (send
-                    (:venue-state state)
-                    (fn [s]
-                      (update-in
-                        s
-                        [venue-id :orders mkt-id]
-                        (fn [contract-ids-and-orders]
-                          (->> contract-ids-and-orders
-                               (map
-                                (fn [[contract-id os]]
-                                  [contract-id
-                                   (concat
-                                    (filter #(->> % :order-id to-remove not) os)
-                                    (filter #(= (:contract-id %) contract-id) to-add))]))
-                               (into {}))))))
-                  (l/log :info "Trades" {:desired-pos desired-pos
-                                         :pos-by-contract-id pos-by-contract-id
-                                         :outstanding-orders-by-contract-id outstanding-orders-by-contract-id
-                                         :trades trades
-                                         :orders orders}))))))))))
+        (let [outstanding-orders-by-contract-id-by-mkt-id (get-in venue-state [venue-id :orders])
+              valid? (->> (mkt-ids-for-strat venue-state venue-id strat-id)
+                          (select-keys outstanding-orders-by-contract-id-by-mkt-id)
+                          (mapcat (comp vals second))
+                          (every? :valid?))]
+          (if-not valid?
+            (l/log :warn "Not trading - invalid orders" {:strat-id strat-id
+                                                         :req-positions-by-mkt-id req-positions-by-mkt-id
+                                                         :outstanding-orders-by-contract-id-by-mkt-id outstanding-orders-by-contract-id-by-mkt-id})
+            (doseq [[mkt-id req-positions] req-positions-by-mkt-id]
+              (let [mkt (->> venue-state
+                            venue-id
+                            :mkts
+                            (filter #(= mkt-id (:market-id %)))
+                            first)
+                    {:keys [bal]} (venue-id venue-state)
+                    bankroll (strat-bankroll venue-state cfg strat-id venue-id)
+                    outstanding-orders-by-contract-id (get outstanding-orders-by-contract-id-by-mkt-id mkt-id)]
+                (if (nil? bankroll)
+                  nil
+                  (let [contracts-by-id (get-in venue-state [venue-id :contracts mkt-id])
+                        desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
+                        pos-by-contract-id (->> venue-state
+                                                venue-id
+                                                :pos
+                                                (mapcat :contracts)
+                                                (reduce
+                                                  (fn [by-id c]
+                                                    (assoc by-id (:contract-id c) c))
+                                                  {}))
+                        trades (adjust-desired-pos-for-actuals venue-state venue-id mkt-id desired-pos pos-by-contract-id outstanding-orders-by-contract-id)
+                        trades-by-contract (reduce
+                                            (fn [by-contract {:keys [contract-id] :as trade}]
+                                              (update by-contract contract-id #(conj % trade)))
+                                            {}
+                                            trades)
+                        trades-of-types (fn [is-type? trades]
+                                          (filter #(is-type? (:trade-type %)) trades))
+                        trades-to-execute-immediately (fn [[contract-id trades]]
+                                                        (let [non-buys (trades-of-types (comp not buy-types) trades)
+                                                              buys (trades-of-types buy-types trades)
+                                                              allow-buys? (empty? non-buys)]
+                                                          (if allow-buys?
+                                                            buys
+                                                            non-buys)))
+                        trades-to-submit (mapcat trades-to-execute-immediately trades-by-contract)
+                        trades-can-submit (reduce
+                                            (fn [{:keys [trades bp] :as state} trade]
+                                              (let [{:keys [permitted? buying-power]} (trade-policy bp mkt contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
+                                                (if permitted?
+                                                  {:trades (conj trades trade)
+                                                  :bp buying-power}
+                                                  (do (l/log :warn "Trade out of policy" {:trade trade
+                                                                                          :bp bp
+                                                                                          :trades trades})
+                                                      state))))
+                                            {:trades []
+                                            :bp bal} ; TODO: reduce by outstanding orders
+                                            trades-to-submit)
+                        orders (map (partial submit-for-execution venue mkt-id) (:trades trades-can-submit))
+                        to-remove (->> orders
+                                      (map :cancelled)
+                                      (filter some?)
+                                      (group-by :contract-id)
+                                      (map #(into #{} %)))
+                        to-add (->> orders
+                                    (map :submitted)
+                                    (filter some?)
+                                    (group-by :contract-id))]
+                    (send
+                      (:venue-state state)
+                      (fn [s]
+                        (update-in
+                          s
+                          [venue-id :orders mkt-id]
+                          (fn [orders-by-contract-id]
+                            (->> (keys orders-by-contract-id)
+                                 (concat (keys to-add))
+                                 (into #{})
+                                 (map
+                                   (fn [contract-id]
+                                    (let [existing (get orders-by-contract-id contract-id)
+                                          add (get to-add contract-id)
+                                          rem (get to-remove contract-id)]
+                                      [contract-id
+                                       {:valid? true
+                                        :orders (->> add
+                                                     (concat (filter #(->> % :order-id rem not) existing))
+                                                     (into []))}])))
+                                 (into {}))))))
+                    (l/log :info "Trades" {:desired-pos desired-pos
+                                          :pos-by-contract-id pos-by-contract-id
+                                          :outstanding-orders-by-contract-id outstanding-orders-by-contract-id
+                                          :trades trades
+                                          :orders orders})))))))))))
