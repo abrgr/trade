@@ -15,19 +15,26 @@
 
 (defn pos-needing-orders [venue-state venue-id pos]
   (->> pos
+       (mapcat :contracts)
        (filter
-        (fn [{:keys [orders]}]
-          (some (partial < 0) (vals orders))))
+        (fn [{{:keys [buy sell]} :orders}]
+          (or (> buy 0) (> sell 0))))
        (filter
         (fn [{:keys [market-id contract-id] {:keys [buy sell]} :orders}]
           (let [orders (get-in venue-state [venue-id :orders market-id contract-id :orders])
-                buy-orders (filter #(some #{:buy-yes :buy-no} (:trade-type %)))
-                sell-orders (filter #(some #{:sell-yes :sell-no} (:trade-type %)))
+                buy-orders (filter #(some #{:buy-yes :buy-no} (:trade-type %)) orders)
+                sell-orders (filter #(some #{:sell-yes :sell-no} (:trade-type %)) orders)
                 qty-sum #(+ %1 (:qty %2))
                 total-buys (reduce qty-sum 0 buy-orders)
                 total-sells (reduce qty-sum 0 sell-orders)]
-            (and (= total-buys buy)
-                 (= total-sells sell)))))))
+            (or (not= total-buys buy)
+                (not= total-sells sell)))))
+       (map (fn [{:keys [market-id]}]
+          (->> pos
+               (filter #(= (:market-id %) market-id))
+               first)))
+       (into #{})
+       (into [])))
 
 (defn get-mkt [venue-state venue-id mkt-id]
   (->> venue-state
