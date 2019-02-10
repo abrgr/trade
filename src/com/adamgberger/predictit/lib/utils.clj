@@ -5,6 +5,8 @@
             [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
 
+(def price-mc (java.math.MathContext. 2 java.math.RoundingMode/HALF_UP))
+
 (declare merge-deep)
 
 (defn deep-merger [v1 v2]
@@ -37,6 +39,11 @@
         (instance? String n) (java.math.BigDecimal. ^String n)
         (instance? Double n) (java.math.BigDecimal. ^Double n)
         :else (java.math.BigDecimal. n))))
+
+(defn to-price [n]
+  (-> n
+      to-decimal
+      (.round price-mc)))
 
 (defn parse-ext-iso-date
   "E.x. 1986-11-22"

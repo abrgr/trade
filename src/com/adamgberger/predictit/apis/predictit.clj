@@ -269,7 +269,7 @@
                            (merge (json-req))
                            (merge (with-auth auth)))
             value-fns {:dateCreated utils/parse-isoish-datetime
-                       :pricePerShare utils/to-decimal}
+                       :pricePerShare utils/to-price}
             url (predictit-api-url (str "/Profile/contract/" contract-id "/Offers"))
             resp (http-get url {:headers headers})]
             (when-not (-> resp :body some?)
@@ -300,7 +300,10 @@
                         (merge (with-auth auth)))
             value-fns {:userInvestment utils/to-decimal
                        :userMaxPayout utils/to-decimal
-                       :userAveragePricePerShare utils/to-decimal}
+                       :userAveragePricePerShare utils/to-decimal
+                       :pricePerShare utils/to-price
+                       :costPerShareNo utils/to-price
+                       :costPerShareYes utils/to-price}
             url (predictit-api-url (str "/Trade/" contract-id "/OrderBook"))
             resp (http-get url {:headers headers})]
             (when-not (-> resp :body some?)
@@ -387,10 +390,10 @@
                            (merge (json-req))
                            (merge (with-auth auth)))
               resp (http-get (predictit-api-url (str "/Market/" market-id "/Contracts")) {:headers headers})
-              value-fns {:bestYesPrice utils/to-decimal
-                         :bestNoPrice utils/to-decimal
-                         :lastTradePrice utils/to-decimal
-                         :lastClosePrice utils/to-decimal
+              value-fns {:bestYesPrice utils/to-price
+                         :bestNoPrice utils/to-price
+                         :lastTradePrice utils/to-price
+                         :lastClosePrice utils/to-price
                          :userAveragePricePerShare utils/to-decimal
                          :dateOpened utils/parse-isoish-datetime}]
             (when-not (-> resp :body some?)
