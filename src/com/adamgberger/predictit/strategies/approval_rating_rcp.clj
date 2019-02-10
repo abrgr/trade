@@ -205,7 +205,7 @@
          (filter #(= (:contract-id %) contract-id))
          first))
 
-(defn trades-for-mkt [hurdle-rate mkt latest-major-input-change cur order-books-by-contract-id prob-by-contract-id]
+(defn trades-for-mkt [hurdle-rate mkt orders-by-contract-id latest-major-input-change cur order-books-by-contract-id prob-by-contract-id]
     (let [time-info (market-time-info (:end-date mkt) latest-major-input-change)
           {:keys [fill-mins]} time-info
           contract-ids-with-order-books (->> order-books-by-contract-id
@@ -218,7 +218,8 @@
           price-and-prob-for-contract (fn [[contract-id prob]]
                                         (let [contract (get-contract mkt contract-id)
                                               order-book (get order-books-by-contract-id contract-id)
-                                              likely-fill (execution-utils/get-likely-fill fill-mins prob order-book pricing-math-ctx)]
+                                              orders (get-in orders-by-contract-id [contract-id :orders])
+                                              likely-fill (execution-utils/get-likely-fill fill-mins prob order-book orders pricing-math-ctx)]
                                             (when (some? likely-fill)
                                                 {:prob prob
                                                  :est-value (:est-value likely-fill)
@@ -238,15 +239,19 @@
     (l/with-log :info "Updating trades"
         (let [{mkts :tradable-mkts :keys [prob-dist latest-major-input-change]} @strat-state
               cur (get-in @(:estimates state) [rcp-estimate-id :val])
-              order-books (get-in @(:venue-state state) [venue-id :order-books])
+              venue-state @(:venue-state state)
+              order-books (get-in venue-state [venue-id :order-books])
+              orders-by-contract-id-by-mkt-id (get-in venue-state [venue-id :orders])
               get-mkt (fn [mkt-id]
                           (->> mkts
                               (filter #(= (:market-id %) mkt-id))
                               first))
+              _ (l/log :info "update-trades orders" {:orders-by-contract-id-by-mkt-id orders-by-contract-id-by-mkt-id})
               get-trades-for-market (fn [[mkt-id p-by-ctrct]]
                                         {mkt-id (trades-for-mkt
                                                     hurdle-rate
                                                     (get-mkt mkt-id)
+                                                    (get orders-by-contract-id-by-mkt-id mkt-id)
                                                     latest-major-input-change
                                                     cur
                                                     (get order-books mkt-id)

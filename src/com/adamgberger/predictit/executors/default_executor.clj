@@ -63,12 +63,13 @@
        (filter #(= (:contract-id %) contract-id))
        empty?))
 
-(defn- current-pos-to-sell [order-books-by-contract-id mins {:keys [contract-id current side avg-price-paid]}]
+(defn- current-pos-to-sell [order-books-by-contract-id orders-by-contract-id mins {:keys [contract-id current side avg-price-paid]}]
   (let [trade-type (sell-trade-type-for-side side)
         {:keys [price]} (exec-utils/get-likely-fill
                           mins
                           avg-price-paid
                           (get order-books-by-contract-id contract-id)
+                          (get orders-by-contract-id contract-id)
                           (java.math.MathContext. 2)
                           trade-type)]
     (if (nil? price)
@@ -90,6 +91,7 @@
                     (map (partial
                           current-pos-to-sell
                           (get-in venue-state [venue-id :order-books mkt-id])
+                          outstanding-orders-by-contract-id
                           (or (->> desired-pos first :target-mins) 60)))
                     (filter some?)))
        (mapcat
@@ -140,6 +142,7 @@
                                                         (* (:avg-price-paid current) 1.1)
                                                         (-> venue-state
                                                             (get-in [venue-id :order-books mkt-id contract-id]))
+                                                        orders
                                                         (java.math.MathContext. 2))]
                                       {:trade-type sell-current
                                        :qty current-qty
@@ -293,7 +296,10 @@
                             first)
                     {:keys [bal]} (venue-id venue-state)
                     bankroll (strat-bankroll venue-state cfg strat-id venue-id)
-                    outstanding-orders-by-contract-id (get outstanding-orders-by-contract-id-by-mkt-id mkt-id)]
+                    outstanding-orders-by-contract-id (->> (get outstanding-orders-by-contract-id-by-mkt-id mkt-id)
+                                                           (map (fn [[contract-id {:keys [orders]}]]
+                                                            [contract-id orders]))
+                                                           (into {}))]
                 (if (nil? bankroll)
                   nil
                   (let [contracts-by-id (get-in venue-state [venue-id :contracts mkt-id])
@@ -357,9 +363,9 @@
                                  (into #{})
                                  (map
                                    (fn [contract-id]
-                                    (let [existing (get orders-by-contract-id contract-id)
+                                    (let [existing (get-in orders-by-contract-id [contract-id :orders])
                                           add (get to-add contract-id)
-                                          rem (get to-remove contract-id)]
+                                          rem (or (get to-remove contract-id) #{})]
                                       [contract-id
                                        {:valid? true
                                         :orders (->> add

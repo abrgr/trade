@@ -13,6 +13,12 @@
         :buy [yn :sell]
         :sell [yn :buy]))
 
+(defn- reverse-trade-keypath [[yn buy-sell]]
+    [({:yes :no
+       :no :yes} yn)
+     ({:buy :sell
+       :sell :buy} buy-sell)])
+
 (defn- find-price-for-mins [^Double immediate-price ^Double last ^Double cur-best ^Integer mins]
     (let [pts (org.apache.commons.math3.fitting.WeightedObservedPoints.)
           fitter (org.apache.commons.math3.fitting.PolynomialCurveFitter/create 2)
@@ -59,18 +65,52 @@
             (> (- 1 est-value) no-mid) :buy-no
             :else nil)))
 
+(defn- adjust-order-book-for-orders [order-book orders]
+    (reduce
+        (fn [book {:keys [trade-type price qty]}]
+            (let [path (->> trade-type keypath-by-trade-type other-side-keypath)
+                  opp-path (reverse-trade-keypath path)
+                  adj-our-side (update-in
+                                    book
+                                    path
+                                    (fn [book-orders]
+                                        (->> book-orders
+                                             (map
+                                                (fn [{book-price :price book-qty :qty :as book-order}]
+                                                    (if (= book-price price)
+                                                        (assoc book-order :qty (max 0 (- book-qty qty)))
+                                                        book-order)))
+                                             (into []))))
+                  adj-opp-side (update-in
+                                    adj-our-side
+                                    opp-path
+                                    (fn [book-orders]
+                                        (->> book-orders
+                                             (map
+                                                (fn [{book-price :price book-qty :qty :as book-order}]
+                                                    (if (= (- 1 book-price) price)
+                                                        (assoc book-order :qty (max 0 (- book-qty qty)))
+                                                        book-order))))))]
+                adj-opp-side))
+        order-book
+        orders))
+
 (defn get-likely-fill
-    ([mins est-value order-book mc]
+    ([mins est-value order-book orders mc]
         (let [{:keys [last-price]} order-book
               trade-type (determine-trade-type est-value order-book)]
-            (get-likely-fill mins est-value order-book mc trade-type)))
-    ([mins est-value order-book mc trade-type]
+            (get-likely-fill mins est-value order-book orders mc trade-type)))
+    ([mins est-value order-book orders mc trade-type]
         (let [{:keys [last-price]} order-book]
             (if (and (some? trade-type) (some? order-book))
                 (let [keypath (trade-type keypath-by-trade-type)
                     opp-keypath (other-side-keypath keypath)
-                    our-side-orders (get-in order-book keypath)
-                    opp-side-orders (get-in order-book opp-keypath)
+                    adj-order-book (adjust-order-book-for-orders order-book orders)
+                    _ (l/log :info "Adj order book" {:adj-order-book adj-order-book
+                                                     :order-book order-book
+                                                     :orders orders})
+                    our-side-orders (get-in adj-order-book keypath)
+                    opp-side-orders (get-in adj-order-book opp-keypath)
                     our-side-est-value (if (= trade-type :buy-no)
                                             (- 1 est-value)
                                             est-value)
@@ -83,14 +123,14 @@
                     cur-best (or (best-price opp-side-orders)
                                 (max (* our-side-est-value 0.6) (or last-price 0.01)))
                     likely-price (find-price-for-mins immediate-price last-price cur-best mins)
-                    usable-price (min
-                                        our-side-est-value
-                                        (max
-                                            0.01
-                                            (cond
-                                                (#{:buy-yes :sell-yes} trade-type) (max likely-price (* 0.2 our-side-est-value))
-                                                (#{:buy-no :sell-no} trade-type) (max likely-price (* 0.2 our-side-est-value))
-                                                :else nil)))]
+                    usable-price (-> (cond
+                                        (#{:buy-yes :sell-yes} trade-type) (max likely-price (* 0.2 our-side-est-value))
+                                        (#{:buy-no :sell-no} trade-type) (max likely-price (* 0.2 our-side-est-value))
+                                        :else nil)
+                                     (min our-side-est-value)
+                                     (max 0.01)
+                                     bigdec
+                                     (.round mc))]
                     (l/log :info "Calculated likely fill" {:likely-price likely-price
                                                            :usable-price usable-price 
                                                            :mins mins
@@ -99,9 +139,7 @@
                                                            :trade-type trade-type
                                                            :immediate-price immediate-price
                                                            :cur-best cur-best})
-                    {:price (-> usable-price
-                                bigdec
-                                (.round mc))
+                    {:price usable-price
                     :est-value our-side-est-value
                     :trade-type trade-type})
                 nil))))
