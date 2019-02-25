@@ -27,6 +27,7 @@
     (set-error-handler!
         agt
         #(log :error "Agent error" (merge {:agent n} (ex-log-msg %2))))
+    (set-error-mode! agt :continue)
     agt)
 
 (defmacro with-log [level msg & body]
