@@ -5,7 +5,8 @@
             [com.adamgberger.predictit.inputs.approval-rating-538 :as approval-538]
             [com.adamgberger.predictit.inputs.harris-interactive :as approval-harris-interactive]
             [com.adamgberger.predictit.inputs.rasmussen :as approval-rasmussen]
-            [com.adamgberger.predictit.inputs.yougov-weekly-registered :as approval-yougov-weekly-registered])
+            [com.adamgberger.predictit.inputs.yougov-weekly-registered :as approval-yougov-weekly-registered]
+            [com.adamgberger.predictit.inputs.approval-rating-the-hill :as approval-the-hill])
   (:gen-class))
 
 (defn update-input [state input-id input-val]
@@ -26,6 +27,7 @@
      approval-rcp/hist  approval-rcp/get-hist
      approval-rasmussen/id approval-rasmussen/get-current
      approval-yougov-weekly-registered/id approval-yougov-weekly-registered/get-current
+     approval-the-hill/id approval-the-hill/get-current
      ;approval-harris-interactive/id approval-harris-interactive/get-current
      ;approval-538/id approval-538/get-current
      })

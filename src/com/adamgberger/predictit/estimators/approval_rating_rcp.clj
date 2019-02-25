@@ -4,7 +4,8 @@
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.inputs.approval-rating-rcp :as approval-rcp]
             [com.adamgberger.predictit.inputs.rasmussen :as approval-rasmussen]
-            [com.adamgberger.predictit.inputs.yougov-weekly-registered :as approval-yougov-weekly-registered])
+            [com.adamgberger.predictit.inputs.yougov-weekly-registered :as approval-yougov-weekly-registered]
+            [com.adamgberger.predictit.inputs.approval-rating-the-hill :as approval-the-hill])
   (:import (org.apache.commons.math3.stat.descriptive DescriptiveStatistics))
   (:gen-class))
 
@@ -82,7 +83,7 @@
       {:mean (* mean-1 0.75)
        :std (* std-1 0.75)})))
 
-(defn- update-est [stats-for-days rcp rcp-hist rasmussen yougov state]
+(defn- update-est [stats-for-days rcp rcp-hist rasmussen yougov thehill state]
   (when (and (some? rcp) (some? rcp-hist))
     (let [{c :constituents
            valid? :valid?
@@ -104,7 +105,14 @@
                                :start (:date rasmussen)
                                :end (:date rasmussen)})
                             with-yougov)
-          new-constituents with-rasmussen
+          final (if (some? thehill)
+                    (assoc
+                      with-rasmussen
+                      "The Hill/HarrisX"
+                      {:val (:val thehill)
+                       :start (:date thehill)
+                       :end (:date thehill)}))
+          new-constituents final
           est (if valid?
                 (-> new-constituents
                     approval-rcp/recalculate-average
@@ -133,11 +141,11 @@
     (when (nil? stats-for-days)
       (throw (ex-info "Bad config for rcp estimator" {:cfg our-cfg})))
     (async/go-loop []
-      (let [[[rcp rcp-hist rasmussen yougov] ch] (async/alts! [c end-chan])]
+      (let [[[rcp rcp-hist rasmussen yougov the-hill] ch] (async/alts! [c end-chan])]
             ; TODO: add some checks to make sure we don't overwrite a good value (basically, check our other inputs)
         (if (= ch end-chan)
           (l/log :warn "Stopping RCP approval estimator")
-          (do (update-est stats-for-days rcp rcp-hist rasmussen yougov state)
+          (do (update-est stats-for-days rcp rcp-hist rasmussen yougov the-hill state)
               (recur)))))
     (utils/add-guarded-watch-ins
         (:inputs state)
@@ -145,6 +153,7 @@
         [[approval-rcp/id]
          [approval-rcp/hist]
          [approval-rasmussen/id]
-         [approval-yougov-weekly-registered/id]]
+         [approval-yougov-weekly-registered/id]
+         [approval-the-hill/id]]
         #(and (not= %1 %2) (some? %2))
         #(async/>!! c %))))
