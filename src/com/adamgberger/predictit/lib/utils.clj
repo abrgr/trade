@@ -169,6 +169,17 @@
               (.withHour hour)
               (.withMinute minute)))))
 
+(defn next-specific-weekday-at [^java.time.LocalDate local-date ^java.time.ZoneId tz ^Integer dow ^Integer hour ^Integer minute]
+  (let [tomorrow (-> local-date
+                     (.atStartOfDay tz)
+                     (.plus 1 java.time.temporal.ChronoUnit/DAYS))
+        tomorrow-day (.get tomorrow java.time.temporal.ChronoField/DAY_OF_WEEK)]
+      (if (not= dow tomorrow-day)
+          (next-specific-weekday-at (.toLocalDate tomorrow) tz dow hour minute)
+          (-> tomorrow
+              (.withHour hour)
+              (.withMinute minute)))))
+
 (defn glb-key
   "Returns the greatest item in items such that (<= (key-fn item) tgt)"
   [items tgt key-fn]
