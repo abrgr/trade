@@ -12,19 +12,21 @@
   (let [tika (Tika.)
         s (.parseToString tika stream)
         q "Do you approve or disapprove of the job Donald Trump is doing as President of the United States?"
-        q-idx (string/index-of s q)
-        q-end-idx (+ 1 q-idx (count q))
-        net-approve-str "NET APPROVE"
-        net-approve-idx (string/index-of s net-approve-str q-end-idx)
-        net-approve-end-idx (+ 1 net-approve-idx (count net-approve-str))
-        net-approve-line-end (string/index-of s "\n" net-approve-end-idx)
-        net-approve-pct-line-end (string/index-of s "\n" (inc net-approve-line-end))
-        line (subs s (inc net-approve-line-end) net-approve-pct-line-end)
-        [_ approval] (re-find #"\s*(\d+)%" line)
-        {date :end-date} (u/parse-human-date-range-within s)]
-    (cb {:val (Integer/parseInt approval)
-         :date date
-         :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)})))
+        q-idx (string/index-of s q)]
+    (if (nil? q-idx)
+        (cb nil)
+        (let [q-end-idx (+ 1 q-idx (count q))
+              net-approve-str "NET APPROVE"
+              net-approve-idx (string/index-of s net-approve-str q-end-idx)
+              net-approve-end-idx (+ 1 net-approve-idx (count net-approve-str))
+              net-approve-line-end (string/index-of s "\n" net-approve-end-idx)
+              net-approve-pct-line-end (string/index-of s "\n" (inc net-approve-line-end))
+              line (subs s (inc net-approve-line-end) net-approve-pct-line-end)
+              [_ approval] (re-find #"\s*(\d+)%" line)
+              {date :end-date} (u/parse-human-date-range-within s)]
+          (cb {:val (Integer/parseInt approval)
+              :date date
+              :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)})))))
 
 (defn- current-from-article-html [html cb err-cb]
   (let [regex #"<iframe src=\"(https://onedrive.live.com/embed?[^\"]+)\""
