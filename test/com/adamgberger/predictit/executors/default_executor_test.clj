@@ -37,12 +37,12 @@
      :mkt-id 5191})
 
 (def actuals
-    (set [{:trade-type :buy-no, :contract-id 13964, :qty 54.0, :target-price 0.9873487542671151, :price 0.79M}
-          {:trade-type :buy-no, :contract-id 13961, :qty 1328.0, :target-price 0.8706304594858997, :price 0.64M}
-          {:trade-type :cancel, :target-price 0.33841908453469954, :contract-id 13966, :order-id 23193426}
-          {:trade-type :buy-yes, :contract-id 13966, :qty 47.0, :target-price 0.33841908453469954, :price 0.12M}
-          {:trade-type :buy-yes, :contract-id 13963, :qty 18.0, :target-price 0.22803119453537668, :price 0.094M}
-          {:trade-type :sell-no, :contract-id 12345, :qty 20, :target-price 0.10M, :price 0.10M}])) ; TODO: types are different
+    (set [{:trade-type :buy-no, :mkt-id 5191, :contract-id 13964, :qty 54.0, :target-price 0.9873487542671151, :price 0.79M}
+          {:trade-type :buy-no, :mkt-id 5191, :contract-id 13961, :qty 1328.0, :target-price 0.8706304594858997, :price 0.64M}
+          {:trade-type :cancel, :mkt-id 5191, :target-price 0.33841908453469954, :contract-id 13966, :order-id 23193426}
+          {:trade-type :buy-yes, :mkt-id 5191, :contract-id 13966, :qty 47.0, :target-price 0.33841908453469954, :price 0.12M}
+          {:trade-type :buy-yes, :mkt-id 5191, :contract-id 13963, :qty 18.0, :target-price 0.22803119453537668, :price 0.094M}
+          {:trade-type :sell-no, :mkt-id 5191, :contract-id 12345, :qty 20, :target-price 0.10M, :price 0.10M}])) ; TODO: types are different
 
 (deftest test-actuals-from-desired
     (testing "adjust-desired-pos-for-actuals"
@@ -55,5 +55,7 @@
                             desired-pos
                             current-pos-by-contract-id
                             outstanding-orders-by-contract-id))]
+            (println "adj-pos" adj-pos)
+            (println "actuals" actuals)
             (is (and (clojure.set/subset? adj-pos actuals)
                      (clojure.set/subset? actuals adj-pos))))))
