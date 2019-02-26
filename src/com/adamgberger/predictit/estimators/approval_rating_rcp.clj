@@ -111,7 +111,8 @@
                       "The Hill/HarrisX"
                       {:val (:val thehill)
                        :start (:date thehill)
-                       :end (:date thehill)}))
+                       :end (:date thehill)})
+                    with-rasmussen)
           new-constituents final
           est (if valid?
                 (-> new-constituents
