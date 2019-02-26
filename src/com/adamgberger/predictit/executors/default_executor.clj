@@ -299,7 +299,16 @@
                     outstanding-orders-by-contract-id (->> (get outstanding-orders-by-contract-id-by-mkt-id mkt-id)
                                                            (map (fn [[contract-id {:keys [orders]}]]
                                                             [contract-id orders]))
-                                                           (into {}))]
+                                                           (into {}))
+                    total-order-dollars (reduce
+                                          (fn [total [_ orders]]
+                                            (reduce
+                                              (fn [sum {:keys [price qty]}]
+                                                (+ sum (* price qty)))
+                                              total
+                                              orders))
+                                          0.0
+                                          outstanding-orders-by-contract-id)]
                 (if (nil? bankroll)
                   nil
                   (let [contracts-by-id (get-in venue-state [venue-id :contracts mkt-id])
@@ -321,6 +330,7 @@
                         trades-of-types (fn [is-type? trades]
                                           (filter #(is-type? (:trade-type %)) trades))
                         trades-to-execute-immediately (fn [[contract-id trades]]
+                                                              ; non-buys should include outstanding orders for this contract
                                                         (let [non-buys (trades-of-types (comp not buy-types) trades)
                                                               buys (trades-of-types buy-types trades)
                                                               allow-buys? (empty? non-buys)]
@@ -339,7 +349,7 @@
                                                                                           :trades trades})
                                                       state))))
                                             {:trades []
-                                            :bp bal} ; TODO: reduce by outstanding orders
+                                             :bp (- bal total-order-dollars)}
                                             trades-to-submit)
                         orders (map (partial submit-for-execution venue mkt-id) (:trades trades-can-submit))
                         to-remove (->> orders
