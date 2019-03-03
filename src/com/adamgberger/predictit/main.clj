@@ -17,9 +17,6 @@
   (->> pos
        (mapcat :contracts)
        (filter
-        (fn [{{:keys [buy sell]} :orders}]
-          (or (> buy 0) (> sell 0))))
-       (filter
         (fn [{:keys [market-id contract-id] {:keys [buy sell]} :orders}]
           (let [orders (get-in venue-state [venue-id :orders market-id contract-id :orders])
                 buy-orders (filter #(some #{:buy-yes :buy-no} (:trade-type %)) orders)
