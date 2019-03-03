@@ -90,7 +90,8 @@
                                                 (fn [{book-price :price book-qty :qty :as book-order}]
                                                     (if (= (- 1 book-price) price)
                                                         (assoc book-order :qty (max 0 (- book-qty qty)))
-                                                        book-order))))))]
+                                                        book-order)))
+                                             (into []))))]
                 adj-opp-side))
         order-book
         orders))
