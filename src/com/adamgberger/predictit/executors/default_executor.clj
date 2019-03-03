@@ -330,10 +330,13 @@
                         trades-of-types (fn [is-type? trades]
                                           (filter #(is-type? (:trade-type %)) trades))
                         trades-to-execute-immediately (fn [[contract-id trades]]
-                                                              ; non-buys should include outstanding orders for this contract
-                                                        (let [non-buys (trades-of-types (comp not buy-types) trades)
+                                                        (let [non-buy-types (comp not buy-types)
+                                                              outstanding-non-buys (->> (get outstanding-orders-by-contract-id contract-id)
+                                                                                        (trades-of-types non-buy-types))
+                                                              non-buys (trades-of-types non-buy-types trades)
                                                               buys (trades-of-types buy-types trades)
-                                                              allow-buys? (empty? non-buys)]
+                                                              allow-buys? (and (empty? non-buys)
+                                                                               (empty? outstanding-non-buys)]
                                                           (if allow-buys?
                                                             buys
                                                             non-buys)))
