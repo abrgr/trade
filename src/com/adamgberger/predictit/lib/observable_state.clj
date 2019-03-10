@@ -11,39 +11,59 @@
                 (validator (get-in state keypath))))
         state))
 
-(defn- on-result [is-terminal update-path send-update new-state prev keypath {:keys [validator] :as cfg} result]
+(defn- with-merge-meta [obj m]
+  (with-meta obj (merge (meta obj) m)))
+
+(defn- on-result [update-path send-update new-state prev keypath {:keys [validator] :as cfg} result]
     (let [valid? (or (nil? validator)
                      (validator result))
           effective-result (if valid?
                                result
-                               (with-meta prev {::invalid-value result}))]
-        (send-update is-terminal update-path keypath (assoc new-state keypath effective-result))))
+                               (with-merge-meta prev {::invalid-value result}))
+          new-val (with-merge-meta effective-result {:updated-at (java.time.Instant/now)})]
+        (send-update update-path keypath (assoc new-state keypath new-val))))
 
-(defn- handle-updates [terminal-nodes
-                       send-update
+(defn- handle-updates [send-update
                        keypath
                        {:keys [param-keypaths io-producer compute-producer] :as cfg}
                        updates]
-    (let [update-keypaths (map :keypath updates)
-          new-states (map :new-state updates)
+    (let [new-states (map :new-state updates)
           new-state (apply merge new-states) ; TODO: confirm that we can never get 2 updates to the same key
           partial-state (select-keys new-state param-keypaths)
           prev (keypath new-state)
           args {:partial-state partial-state
                 :prev prev
                 :key keypath}
-          on-result (partial on-result (terminal-nodes keypath) update send-update new-state prev keypath cfg)]
+          update-path (if (= (count updates) 1)
+                        (-> updates first :update-path)
+                        (map :update-path updates)) ; TODO: this seems wrong
+          handle-result (partial on-result update-path send-update new-state prev keypath cfg)]
         (cond
             ; TODO: timeouts
-            (some? io-producer) (async/go (io-producer args on-result))
+            (some? io-producer) (async/go (io-producer args handle-result))
             (some? compute-producer) (async/go (let [res (async/thread (compute-producer args))]
                                                     (on-result (async/<! res)))))))
+(defn- register-periodicity [start-txn keypath update-pub {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0}}]
+    (when (some? periodicity)
+        (let [periodicity-ch (async/chan)
+              periodicity-pub (async/pub periodicity-ch (constantly ::periodically))
+              keypath-change-ch (async/chan)]
+            (async/go-loop []
+                ; idea: loop here waiting for our keypath to produce something OR for the timeout to elapse
+                ; if the timeout elapses, publish an "update" to our pub
+                ; have the producer subscribe to the pub we return (if we return one)
+                ; ACTUALLY... this needs to publish to a transaction creation queue so that we ensure we only have 1 txn 
+                ; in flight at a time.
+                (let [[update port] (async/alts! [keypath-change-ch
+                                                  (async/timeout (* at-least-every-ms (+ 1 (* (rand) jitter-pct))))])]
+                    (when (not= port keypath-change-ch)
+                      (start-txn :periodicity keypath)))))))
 
 (defn- register-producer [logger
                           state-atom
                           descendants
                           all-ancestors
-                          terminal-nodes
+                          start-txn
                           send-update
                           pub
                           keypath
@@ -61,6 +81,7 @@
                 ; we wait for all of them before running
                 (let [{updated-keypath :keypath :keys [txn-id orig-keypath]} update
                       orig-descendants (descendants orig-keypath)
+                      ; note: required-params is empty when (= updated-keypath keypath) by non-cyclicality
                       required-params (clojure.set/intersection orig-descendants uniq-param-keypaths)
                       needed-params (disj required-params updated-keypath)
                       ; TODO: should definitely have a transaction timeout
@@ -72,7 +93,7 @@
                                            :as next-update} (async/<! update-ch)]
                                         (if (or (not= next-txn-id txn-id)
                                                 (not (contains? remaining next-keypath)))
-                                            (do (logger "Mixed transactions" {:txn-id txn-id :next-txn-id next-txn-id})
+                                            (do (logger :error "Mixed transactions" {:txn-id txn-id :next-txn-id next-txn-id})
                                                 (reduced {:remaining #{}
                                                           :updates []}))
                                             {:remaining (disj remaining next-keypath)
@@ -81,17 +102,17 @@
                                  :updates [update]}
                                 needed-params)]
                     (when-not (empty? remaining)
-                        (logger "Remaining updates not empty" {:remaining remaining
+                        (logger :error "Remaining updates not empty" {:remaining remaining
                                                                :updates updates
                                                                :needed-params needed-params
                                                                :required-params required-params}))
-                    (do (handle-updates terminal-nodes send-update keypath cfg updates)
+                    (do (handle-updates send-update keypath cfg updates)
                         (recur)))))
-        (when (some? periodicity)
-            ; TODO: handle periodicity with periodicity of params.  e.g. if param invoked every 1 second and we're invoked every 2, just skip
-            (async/sub pub ::periodically update-ch))
+        (when-let [periodicity-pub (register-periodicity start-txn keypath pub periodicity)]
+            (async/sub periodicity-pub ::periodically update-ch))
         (doseq [param-keypath uniq-param-keypaths]
-            (async/sub pub param-keypath update-ch))))
+            (async/sub pub param-keypath update-ch))
+        (async/sub pub keypath update-ch)))
 
 (defn- closure-for-node [closure-by-node nexts-by-node is-cyclical? node]
     (when (is-cyclical? node) (throw (ex-info "Cycle detected" {:node node :cycle is-cyclical?})))
@@ -182,10 +203,10 @@
         will be invoked at-least-every-ms, regardless of state changes.
      Cfg may specify:
       - a :logger that is a function of level (:info, :warn, :error), msg (string), and param map ({})."
-    ([init producer-cfg-by-keypath & cfg]
-        (let [{:keys [logger]} (into {} cfg) ; TODO: how do you default a destructure like this?
-              state (atom init)
+    ([init producer-cfg-by-keypath & {:keys [logger] :or {logger prn}}]
+        (let [state (atom init)
               updates-chan (async/chan)
+              txn-chan (async/chan)
               p (async/pub updates-chan :keypath)
               all-ancestors (ancestors-for-all (->> producer-cfg-by-keypath
                                                     (map (fn [[keypath {:keys [param-keypaths]}]]
@@ -202,19 +223,40 @@
                                             descendants)))
                                 {}))
               descendants (transitive-closure next-nodes)
-              terminal-nodes (->> producer-cfg-by-keypath
+              terminal-node? (->> producer-cfg-by-keypath
                                   keys
                                   (filter #(= (count (next-nodes %)) 0))
                                   (into #{}))
-              send-update (fn [is-terminal {:keys [update-path txn-id origin-keypath]} keypath new-state]
-                            (async/go (async/>! updates-chan {:update-path (conj update-path keypath)
-                                                              :txn-id txn-id
-                                                              :origin-keypath origin-keypath
-                                                              :keypath keypath
-                                                              :new-state new-state})
-                                      (when is-terminal (send state #(merge % new-state)))))]
+              start-txn (fn [source keypath]
+                          (async/go (async/>! txn-chan {:action :start
+                                                        :update-path []
+                                                        :txn-id (java.util.UUID/randomUUID)
+                                                        :origin-keypath keypath
+                                                        :keypath keypath
+                                                        :txn-source source
+                                                        :new-state @state})))
+              send-update (fn [{:keys [update-path txn-id origin-keypath] :as update} keypath new-state]
+                            (async/go (if (terminal-node? keypath)
+                                        (async/>! txn-chan (assoc update :action :end))
+                                        (async/>! updates-chan {:update-path (conj update-path keypath)
+                                                                :txn-id txn-id
+                                                                :origin-keypath origin-keypath
+                                                                :keypath keypath
+                                                                :new-state new-state}))))]
+            (async/go-loop []
+              (when-let [{:keys [txn-id action] :as txn} (async/<! txn-chan)]
+                (if (not= action :start)
+                  (logger :error "Expected start transaction" {:txn txn})
+                  (do
+                    (async/>! updates-chan (select-keys txn [:update-path :txn-id :origin-keypath :keypath :new-state]))
+                    (when-let [{end-txn-id :txn-id end-action :action :as end-txn} (async/<! txn-chan)]
+                      (if (not (and (= end-txn-id txn-id)
+                                    (= end-action :end)))
+                        (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
+                        (send state #(merge % new-state))))))
+                (recur)))
             (doseq [[keypath cfg] producer-cfg-by-keypath]
-                (register-producer (or logger prn) state descendants all-ancestors terminal-nodes send-update p keypath cfg))
+                (register-producer logger state descendants all-ancestors start-txn send-update p keypath cfg))
             state)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
