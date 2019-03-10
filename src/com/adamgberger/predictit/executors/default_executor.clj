@@ -336,7 +336,7 @@
                                                               non-buys (trades-of-types non-buy-types trades)
                                                               buys (trades-of-types buy-types trades)
                                                               allow-buys? (and (empty? non-buys)
-                                                                               (empty? outstanding-non-buys)]
+                                                                               (empty? outstanding-non-buys))]
                                                           (if allow-buys?
                                                             buys
                                                             non-buys)))
