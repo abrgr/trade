@@ -20,15 +20,15 @@
           effective-result (if valid?
                                result
                                (with-merge-meta prev {::invalid-value result}))
-          new-val (with-merge-meta effective-result {:updated-at (java.time.Instant/now)})]
+          new-val (with-merge-meta effective-result {::updated-at (java.time.Instant/now)})]
         (send-update update-path keypath (assoc new-state keypath new-val))))
 
 (defn- handle-updates [send-update
                        keypath
-                       {:keys [param-keypaths io-producer compute-producer] :as cfg}
+                       {:keys [param-keypaths io-producer compute-producer projection] :as cfg}
                        updates]
     (let [new-states (map :new-state updates)
-          new-state (apply merge new-states) ; TODO: confirm that we can never get 2 updates to the same key
+          new-state (apply merge new-states)
           partial-state (select-keys new-state param-keypaths)
           prev (keypath new-state)
           args {:partial-state partial-state
@@ -42,7 +42,9 @@
             ; TODO: timeouts
             (some? io-producer) (async/go (io-producer args handle-result))
             (some? compute-producer) (async/go (let [res (async/thread (compute-producer args))]
-                                                    (on-result (async/<! res)))))))
+                                                    (handle-result (async/<! res))))
+            (some? projection) (async/go (let [res (async/thread (projection args))]
+                                                    (handle-result (async/<! res)))))))
 (defn- register-periodicity [start-txn keypath update-pub {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0}}]
     (when (some? periodicity)
         (let [periodicity-ch (async/chan)
@@ -192,6 +194,8 @@
                          state is updated to passed value)
       - a :compute-producer (function receiving a partial state map, current value, and key and expected to return
                              a value or throw; state is updated to returned value)
+      - a :projection (function receiving a partial state map, current value, and key and expected to return
+                             a value or throw; state is not updated but value is propagated
      The config may provide:
       - a :validator that checks the values produced by the producer.  If the validator
         returns false, the value is rejected and the state is not updated.
@@ -227,6 +231,10 @@
                                   keys
                                   (filter #(= (count (next-nodes %)) 0))
                                   (into #{}))
+              projections (->> producer-cfg-by-keypath
+                               keys
+                               (filter #(some? (get-in producer-cfg-by-keypath [% :projection])))
+                               (into #{}))
               start-txn (fn [source keypath]
                           (async/go (async/>! txn-chan {:action :start
                                                         :update-path []
@@ -253,7 +261,7 @@
                       (if (not (and (= end-txn-id txn-id)
                                     (= end-action :end)))
                         (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
-                        (send state #(merge % new-state))))))
+                        (send state #(merge % (apply dissoc new-state projections)))))))
                 (recur)))
             (doseq [[keypath cfg] producer-cfg-by-keypath]
                 (register-producer logger state descendants all-ancestors start-txn send-update p keypath cfg))
@@ -291,6 +299,10 @@
     (s/fspec :args (s/cat :producer-args ::producer-args)
              :ret any?))
 
+(s/def ::projection
+    (s/fspec :args (s/cat :producer-args ::producer-args)
+             :ret any?))
+
 (s/def ::at-least-every-ms int?)
 
 (s/def ::jitter-pct double?)
@@ -306,7 +318,7 @@
 (s/def ::param-keypath-validators (s/map-of ::keypath ::pred))
 
 (s/def ::producer-cfg
-    (s/keys :req-un [(or ::io-producer ::compute-producer)]
+    (s/keys :req-un [(or ::io-producer ::compute-producer ::projection)]
             :opt-un [::validator ::param-keypath-validators ::periodicity ::param-keypaths]))
 
 (s/def ::observable-state any?)
