@@ -24,21 +24,21 @@
       [(.substring haystack 0 idx) (.substring haystack (inc idx))])))
 
 (defn read-json [str value-fns]
-    (json/read-str str
-                   :key-fn keyword
-                   :value-fn (fn [k v]
-                                (let [f (k value-fns)]
-                                    (if (some? f)
-                                        (f v)
-                                        v)))))
+  (json/read-str str
+                 :key-fn keyword
+                 :value-fn (fn [k v]
+                             (let [f (k value-fns)]
+                               (if (some? f)
+                                 (f v)
+                                 v)))))
 
 (defn to-decimal [n]
-    (if (nil? n)
-      nil
-      (cond
-        (instance? String n) (java.math.BigDecimal. ^String n)
-        (instance? Double n) (java.math.BigDecimal. ^Double n)
-        :else (java.math.BigDecimal. n))))
+  (if (nil? n)
+    nil
+    (cond
+      (instance? String n) (java.math.BigDecimal. ^String n)
+      (instance? Double n) (java.math.BigDecimal. ^Double n)
+      :else (java.math.BigDecimal. n))))
 
 (defn to-price [n]
   (-> n
@@ -49,40 +49,40 @@
   "E.x. 1986-11-22"
   [s]
   (some-> s
-      java.time.LocalDate/parse
-      (.atStartOfDay (java.time.ZoneId/of "UTC"))
-      (.truncatedTo java.time.temporal.ChronoUnit/DAYS)
-      (.toInstant)))
+          java.time.LocalDate/parse
+          (.atStartOfDay (java.time.ZoneId/of "UTC"))
+          (.truncatedTo java.time.temporal.ChronoUnit/DAYS)
+          (.toInstant)))
 
 (defn parse-rfc1123-datetime
   "E.x. Fri, 28 Dec 2018 00:00:00 -0600"
   [s]
   (some-> s
-      (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/RFC_1123_DATE_TIME))
-      (.toInstant)))
+          (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/RFC_1123_DATE_TIME))
+          (.toInstant)))
 
 (defn parse-localish-datetime
   "E.x. 11/22/1986 12:30 AM (ET)"
   [s]
   (if (or (nil? s) (= s "N/A"))
-      nil
-      (try
-          (let [formatter (java.time.format.DateTimeFormatter/ofPattern "MM/dd/yyyy hh:mm a (z)")
-              zoned (java.time.ZonedDateTime/parse s formatter)]
-              (.toInstant zoned))
-          (catch java.time.format.DateTimeParseException e
-              (l/log :warn "Un-parsable localish datetime" {:input-string s})
-              nil))))
+    nil
+    (try
+      (let [formatter (java.time.format.DateTimeFormatter/ofPattern "MM/dd/yyyy hh:mm a (z)")
+            zoned (java.time.ZonedDateTime/parse s formatter)]
+        (.toInstant zoned))
+      (catch java.time.format.DateTimeParseException e
+        (l/log :warn "Un-parsable localish datetime" {:input-string s})
+        nil))))
 
 (defn parse-offset-datetime
   "E.x. 2011-12-03T10:15:30+01:00"
   [s]
   (try
-      (some-> s
-          (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
-          .toInstant)
-      (catch java.time.format.DateTimeParseException e
-          (l/log :warn "Un-parsable offset datetime" {:input-string s}))))
+    (some-> s
+            (java.time.ZonedDateTime/parse (java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
+            .toInstant)
+    (catch java.time.format.DateTimeParseException e
+      (l/log :warn "Un-parsable offset datetime" {:input-string s}))))
 
 (defn parse-isoish-datetime
   "E.x. 2018-12-03T11:30:20.00"
@@ -92,7 +92,7 @@
       nil
       (java.time.Instant/parse (if (.endsWith s "Z") s (str s "Z"))))
     (catch java.time.format.DateTimeParseException e
-        (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
+      (l/log :warn "Un-parsable isoish datetime" {:input-string s}))))
 
 (defn parse-human-date-with-day
   "E.x. Thursday, January 10, 2019"
@@ -128,8 +128,8 @@
       (do (l/log :warn "Cannot find human date" {:input-string s})
           nil)
       (java.time.LocalDate/parse
-        (str month " " day " " year)
-        (java.time.format.DateTimeFormatter/ofPattern "MMMM d y")))))
+       (str month " " day " " year)
+       (java.time.format.DateTimeFormatter/ofPattern "MMMM d y")))))
 
 (defn most-recent-month-day
   [^Integer month ^Integer day]
@@ -163,38 +163,38 @@
                      (.atStartOfDay tz)
                      (.plus 1 java.time.temporal.ChronoUnit/DAYS))
         tomorrow-day (.get tomorrow java.time.temporal.ChronoField/DAY_OF_WEEK)]
-      (if (weekend-days? tomorrow-day)
-          (next-weekday-at (.toLocalDate tomorrow) tz hour minute)
-          (-> tomorrow
-              (.withHour hour)
-              (.withMinute minute)))))
+    (if (weekend-days? tomorrow-day)
+      (next-weekday-at (.toLocalDate tomorrow) tz hour minute)
+      (-> tomorrow
+          (.withHour hour)
+          (.withMinute minute)))))
 
 (defn next-specific-weekday-at [^java.time.LocalDate local-date ^java.time.ZoneId tz ^Integer dow ^Integer hour ^Integer minute]
   (let [tomorrow (-> local-date
                      (.atStartOfDay tz)
                      (.plus 1 java.time.temporal.ChronoUnit/DAYS))
         tomorrow-day (.get tomorrow java.time.temporal.ChronoField/DAY_OF_WEEK)]
-      (if (not= dow tomorrow-day)
-          (next-specific-weekday-at (.toLocalDate tomorrow) tz dow hour minute)
-          (-> tomorrow
-              (.withHour hour)
-              (.withMinute minute)))))
+    (if (not= dow tomorrow-day)
+      (next-specific-weekday-at (.toLocalDate tomorrow) tz dow hour minute)
+      (-> tomorrow
+          (.withHour hour)
+          (.withMinute minute)))))
 
 (defn glb-key
   "Returns the greatest item in items such that (<= (key-fn item) tgt)"
   [items tgt key-fn]
   (let [potential-glb (reduce
-                        (fn 
-                          ([] nil)
-                          ([glb next]
-                            (let [glb-key (key-fn glb)
-                                  next-key (key-fn next)
-                                  next-ok (and (some? next-key) (<= (compare next-key tgt) 0))
-                                  c (compare glb-key next-key)]
-                              (if (or (not next-ok) (>= c 0))
-                                  glb
-                                  next))))
-                        items)]
+                       (fn
+                         ([] nil)
+                         ([glb next]
+                          (let [glb-key (key-fn glb)
+                                next-key (key-fn next)
+                                next-ok (and (some? next-key) (<= (compare next-key tgt) 0))
+                                c (compare glb-key next-key)]
+                            (if (or (not next-ok) (>= c 0))
+                              glb
+                              next))))
+                       items)]
     (if (<= (compare (key-fn potential-glb) tgt) 0)
       potential-glb
       nil)))
@@ -203,8 +203,8 @@
   "Reverse the map.  Given {:a :b}, return {:b :a}"
   [m]
   (->> m
-      (map (fn [[k v]] [v k]))
-      (into {})))
+       (map (fn [[k v]] [v k]))
+       (into {})))
 
 (defn repeatedly-until-closed [f interval-ms done end-chan]
   (async/go-loop []
@@ -219,15 +219,15 @@
         (done)))))
 
 (defn add-guarded-watch-in [agt id keypath guard f]
-    (letfn [(w [_ _ old new]
-                (let [new-v (get-in new keypath)
-                      old-v (get-in old keypath)]
-                    (when (guard old-v new-v) (f new-v))))]
-        (add-watch agt id w)))
+  (letfn [(w [_ _ old new]
+            (let [new-v (get-in new keypath)
+                  old-v (get-in old keypath)]
+              (when (guard old-v new-v) (f new-v))))]
+    (add-watch agt id w)))
 
 (defn add-guarded-watch-ins [agt id keypaths guard f]
-    (letfn [(w [_ _ old new]
-                (let [new-vs (map (partial get-in new) keypaths)
-                      old-vs (map (partial get-in old) keypaths)]
-                    (when (guard old-vs new-vs) (f new-vs))))]
-        (add-watch agt id w)))
+  (letfn [(w [_ _ old new]
+            (let [new-vs (map (partial get-in new) keypaths)
+                  old-vs (map (partial get-in old) keypaths)]
+              (when (guard old-vs new-vs) (f new-vs))))]
+    (add-watch agt id w)))

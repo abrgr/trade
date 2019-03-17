@@ -10,28 +10,28 @@
   (:gen-class))
 
 (defn update-input [state input-id input-val]
-    (send
-        (:inputs state)
-        #(assoc %1 input-id input-val)))
+  (send
+   (:inputs state)
+   #(assoc %1 input-id input-val)))
 
 (defn run-input [state end-chan input-id input]
-    (l/log :info "Starting input" {:input-id input-id})
-    (utils/repeatedly-until-closed
-        #(input (partial update-input state input-id))
-        10000 ; 10 seconds
-        #(l/log :info "Stopping input" {:input-id input-id})
-        end-chan))
+  (l/log :info "Starting input" {:input-id input-id})
+  (utils/repeatedly-until-closed
+   #(input (partial update-input state input-id))
+   10000 ; 10 seconds
+   #(l/log :info "Stopping input" {:input-id input-id})
+   end-chan))
 
 (def inputs
-    {approval-rcp/id approval-rcp/get-current
-     approval-rcp/hist  approval-rcp/get-hist
-     approval-rasmussen/id approval-rasmussen/get-current
-     approval-yougov-weekly-registered/id approval-yougov-weekly-registered/get-current
-     approval-the-hill/id approval-the-hill/get-current
+  {approval-rcp/id approval-rcp/get-current
+   approval-rcp/hist  approval-rcp/get-hist
+   approval-rasmussen/id approval-rasmussen/get-current
+   approval-yougov-weekly-registered/id approval-yougov-weekly-registered/get-current
+   approval-the-hill/id approval-the-hill/get-current
      ;approval-harris-interactive/id approval-harris-interactive/get-current
      ;approval-538/id approval-538/get-current
-     })
+   })
 
 (defn start-all [state end-chan]
-    (doseq [[id input] inputs]
-        (run-input state end-chan id input)))
+  (doseq [[id input] inputs]
+    (run-input state end-chan id input)))

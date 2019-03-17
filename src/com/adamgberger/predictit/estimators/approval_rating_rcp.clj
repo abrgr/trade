@@ -16,10 +16,10 @@
     (let [tz utils/ny-time
           now (java.time.ZonedDateTime/now tz)
           end-of-day (-> now
-                        (.withHour 23)
-                        (.withMinute 59))
+                         (.withHour 23)
+                         (.withMinute 59))
           remaining-for-today (->> primary-sources
-                                  (filter #(< (compare (:next-expected %) end-of-day) 0)))
+                                   (filter #(< (compare (:next-expected %) end-of-day) 0)))
           remaining-count (count remaining-for-today)
           pct-left (double (/ remaining-count (count primary-sources)))
           {:keys [mean std]} (get dist-by-days 1)
@@ -61,7 +61,7 @@
   [vals days]
   (let [^DescriptiveStatistics desc (->> (partition (inc days) 1 vals)
                                          (map
-                                            #(- (-> % first :approval) (-> % last :approval)))
+                                          #(- (-> % first :approval) (-> % last :approval)))
                                          double-array
                                          DescriptiveStatistics.)]
     {:mean (.getMean desc)
@@ -72,16 +72,16 @@
   (let [vs (->> vals (take stats-for-days) (into []))
         dists (->> (range 1 (inc days))
                    (map
-                      (fn [d]
-                        [d (calc-dist-by-day vs d)]))
+                    (fn [d]
+                      [d (calc-dist-by-day vs d)]))
                    (into {}))
         {mean-1 :mean std-1 :std} (get dists 1)]
     ; TODO: this is really how I'm trading??
     (assoc
-      dists
-      0
-      {:mean (* mean-1 0.75)
-       :std (* std-1 0.75)})))
+     dists
+     0
+     {:mean (* mean-1 0.75)
+      :std (* std-1 0.75)})))
 
 (defn- update-est [stats-for-days rcp rcp-hist rasmussen yougov thehill state]
   (when (and (some? rcp) (some? rcp-hist))
@@ -91,28 +91,28 @@
            rcp-date :date} rcp
           with-yougov (if (some? yougov)
                         (assoc
-                          c
-                          "Economist/YouGov"
-                          {:val (:val yougov)
-                           :start (:date yougov)
-                           :end (:date yougov)})
+                         c
+                         "Economist/YouGov"
+                         {:val (:val yougov)
+                          :start (:date yougov)
+                          :end (:date yougov)})
                         c)
           with-rasmussen (if (some? rasmussen)
-                            (assoc
-                              with-yougov
-                              "Rasmussen Reports"
-                              {:val (:val rasmussen)
-                               :start (:date rasmussen)
-                               :end (:date rasmussen)})
-                            with-yougov)
+                           (assoc
+                            with-yougov
+                            "Rasmussen Reports"
+                            {:val (:val rasmussen)
+                             :start (:date rasmussen)
+                             :end (:date rasmussen)})
+                           with-yougov)
           final (if (some? thehill)
-                    (assoc
-                      with-rasmussen
-                      "The Hill/HarrisX"
-                      {:val (:val thehill)
-                       :start (:date thehill)
-                       :end (:date thehill)})
-                    with-rasmussen)
+                  (assoc
+                   with-rasmussen
+                   "The Hill/HarrisX"
+                   {:val (:val thehill)
+                    :start (:date thehill)
+                    :end (:date thehill)})
+                  with-rasmussen)
           new-constituents final
           est (if valid?
                 (-> new-constituents
@@ -122,17 +122,17 @@
           dist-by-days (calc-dist-by-days stats-for-days rcp-hist 7)
           ests (->> dist-by-days
                     (map
-                      (fn [[days {:keys [mean std]}]]
-                        [days (dist-for-days days dist-by-days est [yougov rasmussen])]))
+                     (fn [[days {:keys [mean std]}]]
+                       [days (dist-for-days days dist-by-days est [yougov rasmussen])]))
                     (into {}))]
       (send (:estimates state) #(assoc
-                                  %
-                                  id
-                                  {:val est
-                                   :dists-by-day ests
-                                   :est-at (java.time.Instant/now)
-                                   :date rcp-date
-                                   :diff (- est rcp-val)})))))
+                                 %
+                                 id
+                                 {:val est
+                                  :dists-by-day ests
+                                  :est-at (java.time.Instant/now)
+                                  :date rcp-date
+                                  :diff (- est rcp-val)})))))
 
 (defn run [cfg state end-chan]
   (l/log :info "Starting RCP approval estimator")
@@ -149,12 +149,12 @@
           (do (update-est stats-for-days rcp rcp-hist rasmussen yougov the-hill state)
               (recur)))))
     (utils/add-guarded-watch-ins
-        (:inputs state)
-        ::run
-        [[approval-rcp/id]
-         [approval-rcp/hist]
-         [approval-rasmussen/id]
-         [approval-yougov-weekly-registered/id]
-         [approval-the-hill/id]]
-        #(and (not= %1 %2) (some? %2))
-        #(async/>!! c %))))
+     (:inputs state)
+     ::run
+     [[approval-rcp/id]
+      [approval-rcp/hist]
+      [approval-rasmussen/id]
+      [approval-yougov-weekly-registered/id]
+      [approval-the-hill/id]]
+     #(and (not= %1 %2) (some? %2))
+     #(async/>!! c %))))

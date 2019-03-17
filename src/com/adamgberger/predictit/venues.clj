@@ -3,4 +3,4 @@
   (:gen-class))
 
 (defn venue-makers []
-    [pvenue/make-venue])
+  [pvenue/make-venue])

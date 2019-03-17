@@ -3,4 +3,4 @@
   (:gen-class))
 
 (defn all []
-    [rcp/run])
+  [rcp/run])

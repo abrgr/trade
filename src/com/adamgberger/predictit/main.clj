@@ -27,9 +27,9 @@
             (or (not= total-buys buy)
                 (not= total-sells sell)))))
        (map (fn [{:keys [market-id]}]
-          (->> pos
-               (filter #(= (:market-id %) market-id))
-               first)))
+              (->> pos
+                   (filter #(= (:market-id %) market-id))
+                   first)))
        (into #{})
        (into [])))
 
@@ -51,25 +51,25 @@
         (if (some? market-name)
           (let [orders (v/orders venue market-id market-name contract-id)]
             (send
-              (:venue-state state)
-              #(assoc-in % [venue-id :orders market-id contract-id] {:valid? true :orders orders})))
+             (:venue-state state)
+             #(assoc-in % [venue-id :orders market-id contract-id] {:valid? true :orders orders})))
           (send
-            (:venue-state state)
-            #(assoc-in % [venue-id :orders market-id contract-id] {:valid? false :orders []})))))))
+           (:venue-state state)
+           #(assoc-in % [venue-id :orders market-id contract-id] {:valid? false :orders []})))))))
 
 ; TODO: updates to :pos should potentially invalidate their corresponding order entry
 (defn maintain-orders [state end-chan]
   (doseq [venue (:venues state)
           :let [venue-id (v/id venue)]]
     (utils/add-guarded-watch-ins
-        (:venue-state state)
-        ::maintain-orders
-        [[venue-id :pos]
-         [venue-id :mkts]]
-        (fn [[old-pos old-mkts] [new-pos new-mkts]]
-          (or (not= old-pos new-pos)
-              (not= old-mkts new-mkts)))
-        (fn [_] (update-orders state venue)))))
+     (:venue-state state)
+     ::maintain-orders
+     [[venue-id :pos]
+      [venue-id :mkts]]
+     (fn [[old-pos old-mkts] [new-pos new-mkts]]
+       (or (not= old-pos new-pos)
+           (not= old-mkts new-mkts)))
+     (fn [_] (update-orders state venue)))))
 
 (defn maintain-venue-state [key interval-ms updater state end-chan]
   ; we kick off a go-routine that updates each venue's state
@@ -82,14 +82,14 @@
         upd (fn [venue-state id val]
               (assoc-in venue-state [id key] val))
         handler #(doseq [venue venues]
-                    (let [val (updater venue)
-                          id (v/id venue)]
-                      (send-off venue-state upd id val)))]
+                   (let [val (updater venue)
+                         id (v/id venue)]
+                     (send-off venue-state upd id val)))]
     (utils/repeatedly-until-closed
-      handler
-      600000
-      #(l/log :warn "Stopping venue maintenance" {:key key})
-      end-chan)))
+     handler
+     600000
+     #(l/log :warn "Stopping venue maintenance" {:key key})
+     end-chan)))
 
 (defn maintain-markets [state end-chan]
   ; we kick off a go-routine that polls all available markets in each venue
@@ -105,10 +105,10 @@
 
 (defn start-strategies [cfg state end-chan]
   (reduce
-    (fn [strats next]
-      (merge strats (next cfg state end-chan)))
-    {}
-    (strats/all)))
+   (fn [strats next]
+     (merge strats (next cfg state end-chan)))
+   {}
+   (strats/all)))
 
 (defn maintain-balances [state end-chan]
   ; we kick off a go-routine that polls balance in each venue
@@ -135,11 +135,11 @@
 (defn deref-map [m]
   (->> m
        (map (fn [[k v]]
-          [k
-           (cond
-            (= (type v) clojure.lang.Agent) @v
-            (map? v) (deref-map v)
-            :else v)]))
+              [k
+               (cond
+                 (= (type v) clojure.lang.Agent) @v
+                 (map? v) (deref-map v)
+                 :else v)]))
        (into {})))
 
 (defn state-watchdog [state end-chan]
@@ -149,22 +149,22 @@
 
   (let [handler #(l/log :info "Current state" {:state (deref-map state)})]
     (utils/repeatedly-until-closed
-      handler
-      20000
-      #(l/log :warn "Stopping state watchdog")
-      end-chan)))
+     handler
+     20000
+     #(l/log :warn "Stopping state watchdog")
+     end-chan)))
 
 (defn update-order-book [state venue-id market-id contract-id val]
   (l/log :info "Received order book update" {:venue-id venue-id
                                              :market-id market-id
                                              :contract-id contract-id})
   (send
-    (:venue-state state)
-    #(let [last-price (get-in % [venue-id :contracts market-id contract-id :last-price])]
+   (:venue-state state)
+   #(let [last-price (get-in % [venue-id :contracts market-id contract-id :last-price])]
       (assoc-in
-        %
-        [venue-id :order-books market-id contract-id]
-        (merge {:last-price last-price} val)))))
+       %
+       [venue-id :order-books market-id contract-id]
+       (merge {:last-price last-price} val)))))
 
 (defn all-order-book-reqs [venue-state venue-id]
   (->> (get-in venue-state [venue-id :req-order-books])
@@ -195,15 +195,15 @@
 
 (defn update-contracts [state venue-id market-id market-url]
   (let [venue (->> state
-                    :venues
-                    (filter #(= venue-id (v/id %)))
-                    first)
+                   :venues
+                   (filter #(= venue-id (v/id %)))
+                   first)
         contracts (v/contracts venue market-id market-url)]
     (doseq [contract contracts]
       (let [contract-id (:contract-id contract)]
         (send
-          (:venue-state state)
-          #(assoc-in % [venue-id :contracts market-id contract-id] contract))))
+         (:venue-state state)
+         #(assoc-in % [venue-id :contracts market-id contract-id] contract))))
     contracts))
 
 (defn monitor-market-contracts [state end-chan venue-id market-id market-url]
@@ -231,35 +231,35 @@
               market-id
               market-url
               contract-id)
-            (monitor-order-book state end-chan venue-id market-id contract-id))))))
+             (monitor-order-book state end-chan venue-id market-id contract-id))))))
 
 (defn maintain-order-books [state end-chan]
   ; monitor state -> venue-state -> venue-id -> :req-order-books -> strat-id for sets of maps like this:
   ; {:market-id x :market-name x :contract-id y}
   (add-watch
-    (:venue-state state)
-    ::maintain-order-books
-    (fn [_ _ old new]
-      (let [venue-ids (set (concat (keys old) (keys new)))]
-        (doseq [venue-id venue-ids]
-          (let [new-reqs (all-order-book-reqs new venue-id)
-                old-reqs (all-order-book-reqs old venue-id)
-                added (clojure.set/difference new-reqs old-reqs)
-                venue (->> state
-                           :venues
-                           (filter #(= venue-id (v/id %)))
-                           first)]
-            (doseq [to-add added]
-              (maintain-order-book state end-chan venue-id venue to-add))))))))
+   (:venue-state state)
+   ::maintain-order-books
+   (fn [_ _ old new]
+     (let [venue-ids (set (concat (keys old) (keys new)))]
+       (doseq [venue-id venue-ids]
+         (let [new-reqs (all-order-book-reqs new venue-id)
+               old-reqs (all-order-book-reqs old venue-id)
+               added (clojure.set/difference new-reqs old-reqs)
+               venue (->> state
+                          :venues
+                          (filter #(= venue-id (v/id %)))
+                          first)]
+           (doseq [to-add added]
+             (maintain-order-book state end-chan venue-id venue to-add))))))))
 
 (defn run-executor [state end-chan]
   (let [venue-id (-> state :venues first v/id)]
     (utils/add-guarded-watch-in
-        (:venue-state state)
-        ::run-executor
-        [venue-id :req-pos]
-        not=
-        (partial exec/execute-trades state end-chan venue-id))))
+     (:venue-state state)
+     ::run-executor
+     [venue-id :req-pos]
+     not=
+     (partial exec/execute-trades state end-chan venue-id))))
 
 (defn run-trading [cfg end-chan]
   (let [state {:venues (->> (vs/venue-makers)

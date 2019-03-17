@@ -16,20 +16,20 @@
 
 (defn- async-retry
   ([out-ch pipeline tries]
-    (async-retry out-ch pipeline tries tries 0))
+   (async-retry out-ch pipeline tries tries 0))
   ([out-ch pipeline orig-tries tries skip]
-    (let [ch (async/chan)]
-      (async/go-loop [i 0]
-        (if-let [val (async/<! ch)]
-          (if (and (instance? Exception val)
+   (let [ch (async/chan)]
+     (async/go-loop [i 0]
+       (if-let [val (async/<! ch)]
+         (if (and (instance? Exception val)
                   (> tries 0))
-            (do (l/log :warn "Retrying" (l/ex-log-msg val))
-                (async/<! (async/timeout (+ 100 (rand) (* 200 (Math/pow 2 (inc (- orig-tries tries)))))))
-                (async-retry out-ch pipeline orig-tries (dec tries) i))
-            (do (when (>= i skip) (async/>! out-ch val))
-                (recur (inc i))))
-          (async/close! out-ch)))
-      (pipeline ch))))
+           (do (l/log :warn "Retrying" (l/ex-log-msg val))
+               (async/<! (async/timeout (+ 100 (rand) (* 200 (Math/pow 2 (inc (- orig-tries tries)))))))
+               (async-retry out-ch pipeline orig-tries (dec tries) i))
+           (do (when (>= i skip) (async/>! out-ch val))
+               (recur (inc i))))
+         (async/close! out-ch)))
+     (pipeline ch))))
 
 (defn- async-mapcat [f in-ch]
   (let [out-ch (async/chan)]
@@ -69,29 +69,29 @@
         q "Do you approve or disapprove of the job Donald Trump is doing as President of the United States?"
         q-idx (string/index-of s q)]
     (if (nil? q-idx)
-        (async/close! out-ch)
-        (let [q-end-idx (+ 1 q-idx (count q))
-              net-approve-str "NET APPROVE"
-              net-approve-idx (string/index-of s net-approve-str q-end-idx)
-              net-approve-end-idx (+ 1 net-approve-idx (count net-approve-str))
-              net-approve-line-end (string/index-of s "\n" net-approve-end-idx)
-              net-approve-pct-line-end (string/index-of s "\n" (inc net-approve-line-end))
-              line (subs s (inc net-approve-line-end) net-approve-pct-line-end)
-              [_ approval] (re-find #"\s*(\d+)%" line)
-              {date :end-date} (u/parse-human-date-range-within s)]
-          (async-put-once
-            out-ch
-            {:val (Integer/parseInt approval)
-             :date date
-             :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)})))))
+      (async/close! out-ch)
+      (let [q-end-idx (+ 1 q-idx (count q))
+            net-approve-str "NET APPROVE"
+            net-approve-idx (string/index-of s net-approve-str q-end-idx)
+            net-approve-end-idx (+ 1 net-approve-idx (count net-approve-str))
+            net-approve-line-end (string/index-of s "\n" net-approve-end-idx)
+            net-approve-pct-line-end (string/index-of s "\n" (inc net-approve-line-end))
+            line (subs s (inc net-approve-line-end) net-approve-pct-line-end)
+            [_ approval] (re-find #"\s*(\d+)%" line)
+            {date :end-date} (u/parse-human-date-range-within s)]
+        (async-put-once
+         out-ch
+         {:val (Integer/parseInt approval)
+          :date date
+          :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)})))))
 
 (defn- url-stream [url out-ch]
   (h/get
-    url
-    {:async? true
-      :as :stream}
-    #(async-put-once out-ch (:body %))
-    #(async-put-once out-ch (ex-info "Failed to get URL stream" {:url url} %))))
+   url
+   {:async? true
+    :as :stream}
+   #(async-put-once out-ch (:body %))
+   #(async-put-once out-ch (ex-info "Failed to get URL stream" {:url url} %))))
 
 (defn test-it [url]
   (let [{stream :body :as stuff} (h/get url {:as :stream})
@@ -103,37 +103,37 @@
         q "Do you approve or disapprove of the job Donald Trump is doing as President of the United States?"
         q-idx (string/index-of s q)]
     (if (nil? q-idx)
-        {:nope "nope"}
-        (let [q-end-idx (+ 1 q-idx (count q))
-              net-approve-str "NET APPROVE"
-              net-approve-idx (string/index-of s net-approve-str q-end-idx)
-              net-approve-end-idx (+ 1 net-approve-idx (count net-approve-str))
-              net-approve-line-end (string/index-of s "\n" net-approve-end-idx)
-              net-approve-pct-line-end (string/index-of s "\n" (inc net-approve-line-end))
-              line (subs s (inc net-approve-line-end) net-approve-pct-line-end)
-              [_ approval] (re-find #"\s*(\d+)%" line)
-              {date :end-date} (u/parse-human-date-range-within s)]
-          {:val (Integer/parseInt approval)
-            :date date
-            :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)}))))
+      {:nope "nope"}
+      (let [q-end-idx (+ 1 q-idx (count q))
+            net-approve-str "NET APPROVE"
+            net-approve-idx (string/index-of s net-approve-str q-end-idx)
+            net-approve-end-idx (+ 1 net-approve-idx (count net-approve-str))
+            net-approve-line-end (string/index-of s "\n" net-approve-end-idx)
+            net-approve-pct-line-end (string/index-of s "\n" (inc net-approve-line-end))
+            line (subs s (inc net-approve-line-end) net-approve-pct-line-end)
+            [_ approval] (re-find #"\s*(\d+)%" line)
+            {date :end-date} (u/parse-human-date-range-within s)]
+        {:val (Integer/parseInt approval)
+         :date date
+         :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)}))))
 
 (defn- article-html-to-sheet-url [html out-ch]
   (let [regex #"<iframe src=\"(https://onedrive.live.com/embed?[^\"]+)\""
         [_ sheet-url] (re-find regex html)]
     (if (some? sheet-url)
       (async-put-once
-        out-ch
-        (-> sheet-url
-            (string/replace "/embed?" "/download?")
-            (string/replace "&amp;" "&")))
+       out-ch
+       (-> sheet-url
+           (string/replace "/embed?" "/download?")
+           (string/replace "&amp;" "&")))
       (async/close! out-ch))))
 
 (defn- article-html [url out-ch]
   (h/get
-    url
-    {:async? true}
-    #(async-put-once out-ch (:body %))
-    #(async-put-once out-ch (ex-info "Failed to get article html" {:url url} %))))
+   url
+   {:async? true}
+   #(async-put-once out-ch (:body %))
+   #(async-put-once out-ch (ex-info "Failed to get article html" {:url url} %))))
 
 (defn- get-articles [html]
   (let [regex #"\"(/hilltv/what-americas-thinking/[^\"]+)\""
@@ -146,30 +146,30 @@
 
 (defn- sheet-url-to-approval-val [url out-ch]
   (async-retry
-    out-ch
-    (fn [ch]
-      (->> (async/to-chan [url])
-           (async-thread (async-wrap-error url-stream))
-           (async-thread (async-wrap-error current-from-sheet))
-           (#(async/pipe % ch))))
-    0))
- 
+   out-ch
+   (fn [ch]
+     (->> (async/to-chan [url])
+          (async-thread (async-wrap-error url-stream))
+          (async-thread (async-wrap-error current-from-sheet))
+          (#(async/pipe % ch))))
+   0))
+
 (defn get-current [cb]
   (let [html-chan (async/chan)
         err-cb #(l/log :error "Failed to get the hill poll" (l/ex-log-msg %))]
     (h/get
-      "https://thehill.com/hilltv/america"
-      {:async? true}
-      #(async/go (async/>! html-chan (:body %))
-                 (async/close! html-chan))
-      err-cb)
+     "https://thehill.com/hilltv/america"
+     {:async? true}
+     #(async/go (async/>! html-chan (:body %))
+                (async/close! html-chan))
+     err-cb)
     (->> html-chan
-        (async-mapcat get-articles)
-        (async-thread (async-wrap-error article-html))
-        (async-thread (async-wrap-error article-html-to-sheet-url))
-        (async-thread (async-wrap-error sheet-url-to-approval-val))
-        (async/take 1)
+         (async-mapcat get-articles)
+         (async-thread (async-wrap-error article-html))
+         (async-thread (async-wrap-error article-html-to-sheet-url))
+         (async-thread (async-wrap-error sheet-url-to-approval-val))
+         (async/take 1)
         ; TODO: add a timeout for success and failure case
-        (async-thread (async-wrap-error #(do (cb %1) (async/close! %2))))
-        (async-thread #(do (l/log :error "Error in the hill approval rating" (l/ex-log-msg %1))
-                           (async/close! %2))))))
+         (async-thread (async-wrap-error #(do (cb %1) (async/close! %2))))
+         (async-thread #(do (l/log :error "Error in the hill approval rating" (l/ex-log-msg %1))
+                            (async/close! %2))))))
