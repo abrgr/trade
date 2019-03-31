@@ -43,7 +43,12 @@
 
 (defn- best-price [orders] ; we assume orders is sorted as we want it
     (or (some->> orders
-                 (filter #(> (:qty %) 10))
+                 (reduce
+                   (fn [{:keys [throwaway new-orders]} {:keys [qty] :as order}]
+                     (if (>= throwaway qty)
+                         {:new-orders new-orders :throwaway (- throwaway qty)}
+                         {:new-orders (concat new-orders [(assoc order :qty (- qty throwaway))]) :throwaway 0}))
+                   {:throwaway 10 :new-orders []}) ; throw away the first 10 orders just to cut low-volume noise
                  first
                  :price)
         (->> orders first :price)))
