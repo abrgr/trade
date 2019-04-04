@@ -19,8 +19,8 @@
        (filter
         (fn [{:keys [market-id contract-id] {:keys [buy sell]} :orders}]
           (let [orders (get-in venue-state [venue-id :orders market-id contract-id :orders])
-                buy-orders (filter #(some #{:buy-yes :buy-no} (:trade-type %)) orders)
-                sell-orders (filter #(some #{:sell-yes :sell-no} (:trade-type %)) orders)
+                buy-orders (filter #(#{:buy-yes :buy-no} (:trade-type %)) orders)
+                sell-orders (filter #(#{:sell-yes :sell-no} (:trade-type %)) orders)
                 qty-sum #(+ %1 (:qty %2))
                 total-buys (reduce qty-sum 0 buy-orders)
                 total-sells (reduce qty-sum 0 sell-orders)]
