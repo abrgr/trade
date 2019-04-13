@@ -173,7 +173,7 @@
         (spit auth-cache-fname (pr-str new-auth))
         new-auth))))
 
-(def creds->auth [creds]
+(defn creds->auth [creds]
   (apply -get-auth (map creds [:email :pwd])))
 
 (defmacro with-reauth [creds auth & body]
