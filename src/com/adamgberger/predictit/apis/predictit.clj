@@ -129,6 +129,15 @@
         (throw (ex-info "Bad auth response" {:resp resp})))
       {:auth (resp-from-json resp)})))
 
+(defn ping
+  "Keeps the session alive.
+   Returns nil"
+  [auth]
+  (l/with-log :debug "Ping"
+    (let [headers (from-page (predictit-site-url "/dashboard"))]
+      (http-get (predictit-site-url (str "/signalr/ping?bearer=" (:access_token auth) "&_=" (inst-ms (java.time.Instant/now)))) {:headers headers}))
+      nil))
+
 (defn get-balance
   "Retrieves current balance.
      Returns something like:

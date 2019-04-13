@@ -173,21 +173,47 @@
         (spit auth-cache-fname (pr-str new-auth))
         new-auth))))
 
+(def creds->auth [creds]
+  (apply -get-auth (map creds [:email :pwd])))
+  
+(defmacro with-reauth [creds auth & body]
+  `(try
+    ~@body
+    (catch Exception ex#
+      (if (= (-> ex# ex-data :status) 401)
+        (let [new-auth (creds->auth creds)]
+          (swap! auth (constantly new-auth))
+          (try
+            ~@body
+            (catch Exception ex2#
+              (l/log :error "Exception after re-auth" (l/ex-log-msg ex2#))
+              (Thread/sleep 1000)
+              (System/exit 1))))
+        (throw ex#)))))
+
 (defn make-venue
   "Creates a venue"
   [creds]
-  (let [auth (apply -get-auth (map creds [:email :pwd]))]
+  (let [auth (atom (creds->auth creds))]
+    (async/go-loop
+      (async/<! (async/timeout (* 5 60 1000)))
+      (api/ping (:auth @auth))
+      (recur))
     (reify v/Venue
       (id [this] ::predictit)
-      (current-available-balance [this] (-current-available-balance auth))
-      (available-markets [this] (-available-markets auth))
-      (positions [this] (-positions auth))
-      (contracts [this market-id full-market-url] (-contracts auth market-id full-market-url))
+      (current-available-balance [this]
+        (with-reauth creds auth (-current-available-balance @auth)))
+      (available-markets [this]
+        (with-reauth creds auth (-available-markets @auth)))
+      (positions [this]
+        (with-reauth creds auth (-positions @auth)))
+      (contracts [this market-id full-market-url]
+        (with-reauth creds auth (-contracts @auth market-id full-market-url)))
       (monitor-order-book [this market-id market-name contract-id]
-        (-monitor-order-book auth market-id market-name contract-id))
+        (with-reauth creds auth (-monitor-order-book @auth market-id market-name contract-id)))
       (orders [this market-id full-market-url contract-id]
-        (-orders auth market-id full-market-url contract-id))
+        (with-reauth creds auth (-orders @auth market-id full-market-url contract-id)))
       (submit-order [venue market-id contract-id trade-type qty price]
-        (-submit-order auth market-id contract-id trade-type qty price))
+        (with-reauth creds auth (-submit-order @auth market-id contract-id trade-type qty price)))
       (cancel-order [venue market-id order-id]
-        (-cancel-order auth market-id order-id)))))
+        (with-reauth creds auth (-cancel-order @auth market-id order-id))))))
