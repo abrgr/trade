@@ -136,7 +136,7 @@
   (l/with-log :debug "Ping"
     (let [headers (from-page (predictit-site-url "/dashboard"))]
       (http-get (predictit-site-url (str "/signalr/ping?bearer=" (:access_token auth) "&_=" (inst-ms (java.time.Instant/now)))) {:headers headers}))
-      nil))
+    nil))
 
 (defn get-balance
   "Retrieves current balance.

@@ -175,27 +175,27 @@
 
 (def creds->auth [creds]
   (apply -get-auth (map creds [:email :pwd])))
-  
+
 (defmacro with-reauth [creds auth & body]
   `(try
-    ~@body
-    (catch Exception ex#
-      (if (= (-> ex# ex-data :status) 401)
-        (let [new-auth (creds->auth creds)]
-          (swap! auth (constantly new-auth))
-          (try
-            ~@body
-            (catch Exception ex2#
-              (l/log :error "Exception after re-auth" (l/ex-log-msg ex2#))
-              (Thread/sleep 1000)
-              (System/exit 1))))
-        (throw ex#)))))
+     ~@body
+     (catch Exception ex#
+       (if (= (-> ex# ex-data :status) 401)
+         (let [new-auth (creds->auth creds)]
+           (swap! auth (constantly new-auth))
+           (try
+             ~@body
+             (catch Exception ex2#
+               (l/log :error "Exception after re-auth" (l/ex-log-msg ex2#))
+               (Thread/sleep 1000)
+               (System/exit 1))))
+         (throw ex#)))))
 
 (defn make-venue
   "Creates a venue"
   [creds]
   (let [auth (atom (creds->auth creds))]
-    (async/go-loop
+    (async/go-loop []
       (async/<! (async/timeout (* 5 60 1000)))
       (api/ping (:auth @auth))
       (recur))
