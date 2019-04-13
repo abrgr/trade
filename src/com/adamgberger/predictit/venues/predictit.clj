@@ -181,8 +181,8 @@
      ~@body
      (catch Exception ex#
        (if (= (-> ex# ex-data :status) 401)
-         (let [new-auth (creds->auth creds)]
-           (swap! auth (constantly new-auth))
+         (let [new-auth# (creds->auth ~creds)]
+           (swap! ~auth (constantly new-auth#))
            (try
              ~@body
              (catch Exception ex2#

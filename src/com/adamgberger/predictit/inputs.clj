@@ -24,11 +24,11 @@
 
 (defn- at-most-every [seconds & f]
   (let [last-run (atom (inst-ms (java.time.Instant/now)))]
-    (fn []
+    (fn [& args]
       (let [cur-time (inst-ms (java.time.Instant/now))]
         (when (> cur-time (+ @last-run (* seconds 1000)))
           (swap! last-run (constantly cur-time))
-          (f))))))
+          (apply f args))))))
 
 (def inputs
   {approval-rcp/id approval-rcp/get-current
