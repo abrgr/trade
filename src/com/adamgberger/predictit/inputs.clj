@@ -22,12 +22,20 @@
    #(l/log :info "Stopping input" {:input-id input-id})
    end-chan))
 
+(defn- at-most-every [seconds & f]
+  (let [last-run (atom (inst-ms (java.time.Instant/now)))]
+    (fn []
+      (let [cur-time (inst-ms (java.time.Instant/now))]
+        (when (> cur-time (+ @last-run (* seconds 1000)))
+          (swap! last-run (constantly cur-time))
+          (f))))))
+
 (def inputs
   {approval-rcp/id approval-rcp/get-current
    approval-rcp/hist  approval-rcp/get-hist
    approval-rasmussen/id approval-rasmussen/get-current
    approval-yougov-weekly-registered/id approval-yougov-weekly-registered/get-current
-   approval-the-hill/id approval-the-hill/get-current
+   approval-the-hill/id (at-most-every 30 approval-the-hill/get-current)
      ;approval-harris-interactive/id approval-harris-interactive/get-current
      ;approval-538/id approval-538/get-current
    })
