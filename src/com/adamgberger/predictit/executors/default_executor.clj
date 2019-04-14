@@ -246,8 +246,10 @@
                            :sell-yes :sell
                            :sell-no :sell)))
 (defmethod trade-policy :cancel
-  [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [contract-id]}]
-  (let [{:keys [cancellable? qty price]} (get orders-by-contract-id contract-id)
+  [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [contract-id order-id]}]
+  (let [{:keys [cancellable? qty price]} (->> (get orders-by-contract-id contract-id)
+                                              (filter #(= (:order-id %) order-id))
+                                              first)
         permitted? cancellable?
         bp-effect (if permitted? (* qty price) 0)]
     {:permitted? permitted?
