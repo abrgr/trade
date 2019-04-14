@@ -22,7 +22,7 @@
    #(l/log :info "Stopping input" {:input-id input-id})
    end-chan))
 
-(defn- at-most-every [seconds & f]
+(defn- at-most-every [seconds f]
   (let [last-run (atom (inst-ms (java.time.Instant/now)))]
     (fn [& args]
       (let [cur-time (inst-ms (java.time.Instant/now))]
