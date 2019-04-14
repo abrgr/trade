@@ -242,7 +242,7 @@
                            :cancel :cancel
                            :buy-yes :buy
                            :buy-no :buy
-                           :sell-yes :buy
+                           :sell-yes :sell
                            :sell-no :sell)))
 (defmethod trade-policy :cancel
   [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [contract-id]}]
@@ -263,10 +263,14 @@
     {:permitted? permitted?
      :buying-power (if permitted? new-bp bp)}))
 (defmethod trade-policy :sell
-  [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [contract-id]}]
-  (let [{:keys [tradable?]} (get pos-by-contract-id contract-id)
+  [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {trade-qty :qty :keys [contract-id trade-type]}]
+  (let [{:keys [tradable? qty side]} (get pos-by-contract-id contract-id)
+        owned-side-ok? (= side (side-for-trade-type trade-type))
+        owned-qty-ok? (>= qty trade-qty)
         permitted? (and (= (:status mkt) :open)
-                        tradable?)]
+                        tradable?
+                        owned-side-ok?
+                        owned-qty-ok?)]
     {:permitted? permitted?
      :buying-power bp}))
 
