@@ -183,7 +183,8 @@
                                           :target-price target-price
                                           :order-id (:order-id ord)})
                                        old-buys-to-cancel)
-                order-sell-old-pos (when (< desired-qty cur-qty)
+                order-sell-old-pos (when (and (pos? desired-qty)
+                                              (< desired-qty cur-qty))
                                      {:trade-type sell-current
                                       :mkt-id mkt-id
                                       :contract-id contract-id

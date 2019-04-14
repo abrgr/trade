@@ -93,7 +93,7 @@
     (if (= CobylaExitStatus/NORMAL res)
       (let [with-weights (->> weights
                               (map
-                               #(assoc %1 :weight %2)
+                               #(assoc %1 :weight (max 0 %2)) ; need the max here to get rid of double artifacts that break our non-neg constraint
                                contracts)
                               (filter (comp not :cash?)) ; remove the cash contract we added
                               (into []))]
