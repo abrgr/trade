@@ -112,9 +112,6 @@
        (let [keypath (trade-type keypath-by-trade-type)
              opp-keypath (other-side-keypath keypath)
              adj-order-book (adjust-order-book-for-orders order-book orders)
-             _ (l/log :info "Adj order book" {:adj-order-book adj-order-book
-                                              :order-book order-book
-                                              :orders orders})
              our-side-orders (get-in adj-order-book keypath)
              opp-side-orders (get-in adj-order-book opp-keypath)
              our-side-est-value (if (= trade-type :buy-no)

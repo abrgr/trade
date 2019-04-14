@@ -35,7 +35,7 @@
    approval-rcp/hist  approval-rcp/get-hist
    approval-rasmussen/id approval-rasmussen/get-current
    approval-yougov-weekly-registered/id approval-yougov-weekly-registered/get-current
-   approval-the-hill/id (at-most-every 30 approval-the-hill/get-current)
+   approval-the-hill/id (at-most-every 60 approval-the-hill/get-current)
      ;approval-harris-interactive/id approval-harris-interactive/get-current
      ;approval-538/id approval-538/get-current
    })

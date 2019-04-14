@@ -246,7 +246,6 @@
                     (->> mkts
                          (filter #(= (:market-id %) mkt-id))
                          first))
-          _ (l/log :info "update-trades orders" {:orders-by-contract-id-by-mkt-id orders-by-contract-id-by-mkt-id})
           get-trades-for-market (fn [[mkt-id p-by-ctrct]]
                                   {mkt-id (trades-for-mkt
                                            hurdle-rate

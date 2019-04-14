@@ -86,12 +86,14 @@
           :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)})))))
 
 (defn- url-stream [url out-ch]
+  (l/log :debug "The hill: getting url" {:url url})
   (h/get
    url
    {:async? true
-    :as :stream}
-   #(async-put-once out-ch (:body %))
-   #(async-put-once out-ch (ex-info "Failed to get URL stream" {:url url} %))))
+    :as :byte-array}
+   #(do (l/log :debug "The hill: got url" {:url url})
+        (async-put-once out-ch (clojure.java.io/input-stream (:body %))))
+   #(async-put-once out-ch (ex-info "Failed to get URL stream" (merge (l/ex-log-msg %) {:url url}) %))))
 
 (defn test-it [url]
   (let [{stream :body :as stuff} (h/get url {:as :stream})

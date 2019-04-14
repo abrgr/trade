@@ -329,6 +329,10 @@
                                                    (assoc by-id (:contract-id c) c))
                                                  {}))
                         trades (adjust-desired-pos-for-actuals venue-state venue-id mkt-id desired-pos pos-by-contract-id outstanding-orders-by-contract-id)
+                        _ (l/log :debug "Adjust desired for actuals" {:desired-pos desired-pos
+                                                                      :pos-by-contract-id pos-by-contract-id
+                                                                      :outstanding-orders-by-contract-id outstanding-orders-by-contract-id
+                                                                      :trades trades})
                         trades-by-contract (reduce
                                             (fn [by-contract {:keys [contract-id] :as trade}]
                                               (update by-contract contract-id #(conj % trade)))
@@ -392,7 +396,8 @@
                                                    (concat (filter #(->> % :order-id rem not) existing))
                                                    (into []))}])))
                                (into {}))))))
-                    (l/log :info "Trades" {:desired-pos desired-pos
+                    (l/log :info "Trades" {:bankroll bankroll
+                                           :desired-pos desired-pos
                                            :pos-by-contract-id pos-by-contract-id
                                            :outstanding-orders-by-contract-id outstanding-orders-by-contract-id
                                            :trades trades
