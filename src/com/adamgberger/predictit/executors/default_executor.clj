@@ -44,6 +44,12 @@
   {:yes :sell-yes
    :no :sell-no})
 
+(def opp-action-for-trade-type
+  {:buy-yes :sell-yes
+   :sell-yes :buy-yes
+   :buy-no :sell-no
+   :sell-no :buy-no})
+
 (def buy-types (set (vals buy-trade-type-for-side)))
 
 (def sell-types (set (vals sell-trade-type-for-side)))
@@ -112,12 +118,21 @@
                 opp-buy (-> desired-side opposite-side buy-trade-type-for-side)
                 desired-side-sell (-> desired-side sell-trade-type-for-side)
                 {desired-price :price desired-qty :qty} pos
+                cur-qty (if (= desired-side current-side)
+                          current-qty
+                          0)
+                total-ord-qty (->> orders
+                                   (map :qty)
+                                   (reduce + 0))
                 close-enough-order? #(< (Math/abs (double (- (:price %) desired-price))) 0.05)
-                ords-by-should-cancel (->> pos
-                                           :trade-type
-                                           ords-by-trade-type
-                                           (partition-by close-enough-order?)
-                                           (map (fn [items] [(->> items first close-enough-order? not)
+                should-keep-order? #(if (and (= (-> % :trade-type side-for-trade-type) desired-side)
+                                             (> desired-qty (+ cur-qty total-ord-qty)))
+                                        (close-enough-order? %)
+                                        false)
+                ords-by-should-cancel (->> (-> pos :trade-type ords-by-trade-type)
+                                           (concat (-> pos :trade-type opp-action-for-trade-type ords-by-trade-type))
+                                           (partition-by should-keep-order?)
+                                           (map (fn [items] [(->> items first should-keep-order? not)
                                                              items]))
                                            (into {}))
                 old-buys-to-cancel (get ords-by-should-cancel true)
@@ -125,9 +140,6 @@
                 ord-qty (->> still-active-old-buys
                              (map :qty)
                              (reduce + 0))
-                cur-qty (if (= desired-side current-side)
-                          current-qty
-                          0)
                 ord-amt (->> still-active-old-buys
                              (reduce #(+ %1 (* (:price %2) (:qty %2))) 0.0))
                 cur-amt (+ current-holding ord-amt)
@@ -183,7 +195,7 @@
                                           :target-price target-price
                                           :order-id (:order-id ord)})
                                        old-buys-to-cancel)
-                order-sell-old-pos (when (and (pos? desired-qty)
+                order-sell-old-pos (when (and (>= desired-qty 0)
                                               (< desired-qty cur-qty))
                                      {:trade-type sell-current
                                       :mkt-id mkt-id
@@ -341,16 +353,13 @@
                         trades-of-types (fn [is-type? trades]
                                           (filter #(is-type? (:trade-type %)) trades))
                         trades-to-execute-immediately (fn [[contract-id trades]]
-                                                        (let [non-buy-types (comp not buy-types)
-                                                              outstanding-non-buys (->> (get outstanding-orders-by-contract-id contract-id)
-                                                                                        (trades-of-types non-buy-types))
-                                                              non-buys (trades-of-types non-buy-types trades)
-                                                              buys (trades-of-types buy-types trades)
-                                                              allow-buys? (and (empty? non-buys)
-                                                                               (empty? outstanding-non-buys))]
-                                                          (if allow-buys?
-                                                            buys
-                                                            non-buys)))
+                                                        (let [buys (trades-of-types buy-types trades)
+                                                              sells (trades-of-types sell-types trades)
+                                                              cancels (trades-of-types #{:cancel} trades)]
+                                                          (cond
+                                                            (not-empty cancels) cancels
+                                                            (not-empty sells) sells
+                                                            (not-empty buys) buys)))
                         trades-to-submit (mapcat trades-to-execute-immediately trades-by-contract)
                         trades-can-submit (reduce
                                            (fn [{:keys [trades bp] :as state} trade]
