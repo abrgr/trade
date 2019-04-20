@@ -150,8 +150,8 @@
                 order-sell-cur (when (and (> current-qty 0)
                                           (not= desired-side current-side))
                                  (let [likely-fill (exec-utils/get-likely-fill
-                                                    (/ (:target-mins pos) 2)
-                                                    (* (:avg-price-paid current) 1.1)
+                                                    2 ; if we're on the wrong side, just get out
+                                                    (- 1 target-price)
                                                     (-> venue-state
                                                         (get-in [venue-id :order-books mkt-id contract-id]))
                                                     orders
