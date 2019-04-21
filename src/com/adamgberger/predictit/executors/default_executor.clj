@@ -44,6 +44,12 @@
   {:yes :sell-yes
    :no :sell-no})
 
+(def action-for-trade-type
+  {:buy-yes :buy
+   :sell-yes :sell
+   :buy-no :buy
+   :sell-no :sell})
+
 (def opp-action-for-trade-type
   {:buy-yes :sell-yes
    :sell-yes :buy-yes
@@ -87,6 +93,24 @@
        :price price
        :qty 0})))
 
+(defmulti should-keep-order? (fn [info desired-pos order] {:order-action (-> :trade-type order action-for-trade-type)
+                                                           :same-side (= (-> :trade-type order side-for-trade-type)
+                                                                         (-> :trade-type desired-pos side-for-trade-type))}))
+(defmethod should-keep-order? {:order-action :buy :same-side true}
+  [{:keys [cur-qty total-buy-qty]} {desired-qty :qty desired-price :price} {:keys [price]}]
+  (and (>= desired-qty (+ cur-qty total-buy-qty)) ; TODO: this doesn't account for wanting an extra 20 but having 2 orders in for 15; both would be canceled
+       (< (Math/abs (double (- price desired-price))) 0.03)))
+(defmethod should-keep-order? {:order-action :buy :same-side false}
+  [_ _ _]
+  false)
+(defmethod should-keep-order? {:order-action :sell :same-side true}
+  [{:keys [cur-qty]} {desired-qty :qty desired-price :price} {:keys [price]}]
+  (and (< desired-qty cur-qty)
+       (< (Math/abs (double (- price desired-price))) 0.03)))
+(defmethod should-keep-order? {:order-action :sell :same-side false}
+  [_ {desired-price :price} {:keys [price]}]
+  (< (Math/abs (double (- price desired-price))) 0.03))
+
 (defn- adjust-desired-pos-for-actuals [venue-state venue-id mkt-id desired-pos current-pos-by-contract-id outstanding-orders-by-contract-id]
   (->> desired-pos
        ; generate sells for any position that we no longer have a desired-pos for
@@ -117,36 +141,38 @@
                 current-holding (* current-qty (:avg-price-paid current))
                 opp-buy (-> desired-side opposite-side buy-trade-type-for-side)
                 desired-side-sell (-> desired-side sell-trade-type-for-side)
+                opp-side-sell (-> desired-side opposite-side sell-trade-type-for-side)
                 {desired-price :price desired-qty :qty} pos
                 cur-qty (if (= desired-side current-side)
                           current-qty
                           0)
-                total-ord-qty (->> orders
+                opp-qty (if (not= desired-side current-side)
+                          current-qty
+                          0)
+                total-buy-qty (->> orders
+                                   (filter #(= (:trade-type %) (:trade-type pos)))
                                    (map :qty)
                                    (reduce + 0))
-                close-enough-order? #(< (Math/abs (double (- (:price %) desired-price))) 0.05)
-                should-keep-order? #(if (and (= (-> % :trade-type side-for-trade-type) desired-side)
-                                             (> desired-qty (+ cur-qty total-ord-qty)))
-                                        (close-enough-order? %)
-                                        false)
-                ords-by-should-cancel (->> (-> pos :trade-type ords-by-trade-type)
-                                           (concat (-> pos :trade-type opp-action-for-trade-type ords-by-trade-type))
-                                           (partition-by should-keep-order?)
-                                           (map (fn [items] [(->> items first should-keep-order? not)
-                                                             items]))
-                                           (into {}))
-                old-buys-to-cancel (get ords-by-should-cancel true)
-                still-active-old-buys (get ords-by-should-cancel false)
-                ord-qty (->> still-active-old-buys
-                             (map :qty)
-                             (reduce + 0))
-                ord-amt (->> still-active-old-buys
+                ords-by-should-keep (->> orders
+                                         (group-by (partial should-keep-order? {:cur-qty cur-qty :total-buy-qty total-buy-qty} pos)))
+                old-ords-to-cancel (get ords-by-should-keep false)
+                still-active-old-ords (get ords-by-should-keep true)
+                our-side-buy-ords (->> still-active-old-ords
+                                       (filter #(= (:trade-type %) (:trade-type pos))))
+                our-side-sell-ords (->> still-active-old-ords
+                                        (filter #(= (:trade-type %) desired-side-sell)))
+                opp-side-sell-ords (->> still-active-old-ords
+                                        (filter #(= (:trade-type %) opp-side-sell)))
+                remaining-buy-qty (->> our-side-buy-ords
+                                       (map :qty)
+                                       (reduce + 0))
+                ord-amt (->> our-side-buy-ords
                              (reduce #(+ %1 (* (:price %2) (:qty %2))) 0.0))
                 cur-amt (+ current-holding ord-amt)
                 max-qty (Math/floor (/ (- 850.0 cur-amt) desired-price))
-                remaining-qty (min max-qty (- desired-qty cur-qty ord-qty))
-                bad-buys-to-cancel (opp-buy ords-by-trade-type)
-                bad-sells-to-cancel (desired-side-sell ords-by-trade-type)
+                remaining-qty (min max-qty (- desired-qty cur-qty remaining-buy-qty))
+                ; TODO: need to check if we already have sells pending, may want to cancel and re-enter, may want to let them ride
+                ; as-is, we try to double sell
                 order-sell-cur (when (and (> current-qty 0)
                                           (not= desired-side current-side))
                                  (let [likely-fill (exec-utils/get-likely-fill
@@ -162,24 +188,6 @@
                                     :contract-id contract-id
                                     :target-price (:est-value likely-fill)
                                     :price (:price likely-fill)}))
-                order-cancel-buys (when-not (empty? bad-buys-to-cancel)
-                                    (map
-                                     (fn [ord]
-                                       {:trade-type :cancel
-                                        :target-price target-price
-                                        :mkt-id mkt-id
-                                        :contract-id contract-id
-                                        :order-id (:order-id ord)})
-                                     bad-buys-to-cancel))
-                order-cancel-sells (when-not (empty? bad-sells-to-cancel)
-                                     (map
-                                      (fn [ord]
-                                        {:trade-type :cancel
-                                         :mkt-id mkt-id
-                                         :contract-id contract-id
-                                         :target-price target-price
-                                         :order-id (:order-id ord)})
-                                      bad-sells-to-cancel))
                 order-place-buy (when (> remaining-qty 0)
                                   {:trade-type (:trade-type pos)
                                    :mkt-id mkt-id
@@ -187,14 +195,14 @@
                                    :qty remaining-qty
                                    :target-price target-price
                                    :price desired-price})
-                order-cancel-old-buys (map
+                order-cancel-old-ords (map
                                        (fn [ord]
                                          {:trade-type :cancel
                                           :mkt-id mkt-id
                                           :contract-id contract-id
                                           :target-price target-price
                                           :order-id (:order-id ord)})
-                                       old-buys-to-cancel)
+                                       old-ords-to-cancel)
                 order-sell-old-pos (when (and (>= desired-qty 0)
                                               (< desired-qty cur-qty))
                                      {:trade-type sell-current
@@ -206,15 +214,15 @@
             (->>
              [; we hold something we don't want; sell it
               order-sell-cur
-                 ; we have buy orders out for the wrong side; cancel them
+              ; we have buy orders out for the wrong side; cancel them
               order-cancel-buys
-                 ; we have sell orders out for the wrong side; cancel them
+              ; we have sell orders out for the wrong side; cancel them
               order-cancel-sells
-                 ; our buy order
+              ; our buy order
               order-place-buy
-                 ; canceling our old orders with bad prices
-              order-cancel-old-buys
-                 ; sell old positions we no longer want
+              ; canceling our old orders with bad prices
+              order-cancel-old-ords
+              ; sell old positions we no longer want
               order-sell-old-pos]
              flatten
              (filter some?)
