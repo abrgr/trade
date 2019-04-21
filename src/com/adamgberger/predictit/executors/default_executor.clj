@@ -215,13 +215,9 @@
             (->>
              [; we hold something we don't want; sell it
               order-sell-opp
-              ; we have buy orders out for the wrong side; cancel them
-              order-cancel-buys
-              ; we have sell orders out for the wrong side; cancel them
-              order-cancel-sells
               ; our buy order
               order-place-buy
-              ; canceling our old orders with bad prices
+              ; canceling our old orders with bad prices, on the wrong side, or no longer needed
               order-cancel-old-ords
               ; sell old positions we no longer want
               order-sell-old-pos]
