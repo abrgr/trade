@@ -137,9 +137,7 @@
                 current-qty (:qty current)
                 target-price (:target-price pos)
                 sell-current (sell-trade-type-for-side current-side)
-                ords-by-trade-type (orders-by-trade-type orders)
                 current-holding (* current-qty (:avg-price-paid current))
-                opp-buy (-> desired-side opposite-side buy-trade-type-for-side)
                 desired-side-sell (-> desired-side sell-trade-type-for-side)
                 opp-side-sell (-> desired-side opposite-side sell-trade-type-for-side)
                 {desired-price :price desired-qty :qty} pos
@@ -159,10 +157,14 @@
                 still-active-old-ords (get ords-by-should-keep true)
                 our-side-buy-ords (->> still-active-old-ords
                                        (filter #(= (:trade-type %) (:trade-type pos))))
-                our-side-sell-ords (->> still-active-old-ords
-                                        (filter #(= (:trade-type %) desired-side-sell)))
-                opp-side-sell-ords (->> still-active-old-ords
-                                        (filter #(= (:trade-type %) opp-side-sell)))
+                our-side-sell-qty (->> still-active-old-ords
+                                       (filter #(= (:trade-type %) desired-side-sell))
+                                       (map :qty)
+                                       (reduce + 0))
+                opp-side-sell-qty (->> still-active-old-ords
+                                       (filter #(= (:trade-type %) opp-side-sell))
+                                       (map :qty)
+                                       (reduce + 0))
                 remaining-buy-qty (->> our-side-buy-ords
                                        (map :qty)
                                        (reduce + 0))
@@ -171,10 +173,9 @@
                 cur-amt (+ current-holding ord-amt)
                 max-qty (Math/floor (/ (- 850.0 cur-amt) desired-price))
                 remaining-qty (min max-qty (- desired-qty cur-qty remaining-buy-qty))
-                ; TODO: need to check if we already have sells pending, may want to cancel and re-enter, may want to let them ride
-                ; as-is, we try to double sell
-                order-sell-cur (when (and (> current-qty 0)
-                                          (not= desired-side current-side))
+                order-sell-opp (when (and (not= desired-side current-side)
+                                          (> current-qty 0)
+                                          (< opp-side-sell-qty current-qty))
                                  (let [likely-fill (exec-utils/get-likely-fill
                                                     2 ; if we're on the wrong side, just get out
                                                     (- 1 target-price)
@@ -183,7 +184,7 @@
                                                     orders
                                                     (java.math.MathContext. 2))]
                                    {:trade-type sell-current
-                                    :qty current-qty
+                                    :qty (- current-qty opp-side-sell-qty)
                                     :mkt-id mkt-id
                                     :contract-id contract-id
                                     :target-price (:est-value likely-fill)
@@ -204,16 +205,16 @@
                                           :order-id (:order-id ord)})
                                        old-ords-to-cancel)
                 order-sell-old-pos (when (and (>= desired-qty 0)
-                                              (< desired-qty cur-qty))
+                                              (< desired-qty (- cur-qty our-side-sell-qty)))
                                      {:trade-type sell-current
                                       :mkt-id mkt-id
                                       :contract-id contract-id
-                                      :qty (- cur-qty desired-qty)
+                                      :qty (- cur-qty desired-qty our-side-sell-qty)
                                       :target-price desired-price ; TODO: this ain't right but we don't really use this field
                                       :price desired-price})]
             (->>
              [; we hold something we don't want; sell it
-              order-sell-cur
+              order-sell-opp
               ; we have buy orders out for the wrong side; cancel them
               order-cancel-buys
               ; we have sell orders out for the wrong side; cancel them
