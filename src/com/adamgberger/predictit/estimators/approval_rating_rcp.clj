@@ -115,9 +115,10 @@
                   with-rasmussen)
           new-constituents final
           est (if valid?
-                (-> new-constituents
-                    approval-rcp/recalculate-average
-                    :exact)
+                (or (-> new-constituents
+                        approval-rcp/recalculate-average
+                        :exact)
+                    rcp-val)
                 rcp-val) ; there was some problem with a consistency check on recalculating rcp, just use the given value
           dist-by-days (calc-dist-by-days stats-for-days rcp-hist 7)
           ests (->> dist-by-days

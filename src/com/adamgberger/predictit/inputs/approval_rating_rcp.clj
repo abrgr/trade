@@ -58,9 +58,12 @@
                                            :sum (+ sum val)})
                                         {:count java.math.BigDecimal/ZERO
                                          :sum java.math.BigDecimal/ZERO})
-                                       (#(.divide ^java.math.BigDecimal (:sum %) ^java.math.BigDecimal (:count %) (java.math.MathContext. 6 java.math.RoundingMode/HALF_UP))))]
-    {:rounded (.round avg (java.math.MathContext. 3 java.math.RoundingMode/HALF_UP))
-     :exact avg}))
+                                       (#(when (-> % :count pos?)
+                                           (.divide ^java.math.BigDecimal (:sum %) ^java.math.BigDecimal (:count %) (java.math.MathContext. 6 java.math.RoundingMode/HALF_UP)))))]
+    (if (nil? avg)
+      nil
+      {:rounded (.round avg (java.math.MathContext. 3 java.math.RoundingMode/HALF_UP))
+       :exact avg})))
 
 (defn- get-constituents [start-date end-date vals-by-src-date]
   (->> vals-by-src-date
@@ -99,8 +102,9 @@
                                  (let [poll (first row)
                                        date-range (utils/parse-historical-month-day-range (second row))
                                        val (utils/to-decimal (nth row 3))]
-                                   (assoc-in by-src-date [poll (:to date-range)] {:val val
-                                                                                  :start (:from date-range)})))
+                                   (assoc-in by-src-date [(string/replace poll #"\s+|\h+" " ") ; sometimes they use nbsp (ascii 160)
+                                                          (:to date-range)] {:val val
+                                                                             :start (:from date-range)})))
                                {}))
         rcp (get vals-by-src-date "RCP Average")
         avg (-> rcp vals first :val)
@@ -108,12 +112,15 @@
         end-date (-> rcp keys first)
         constituents (get-constituents start-date end-date vals-by-src-date)
         recalculated-avg (recalculate-average constituents)
-        valid-constituents? (-> recalculated-avg
-                                :rounded
-                                (= avg))]
+        valid-constituents? (and (some? recalculated-avg)
+                                 (-> recalculated-avg
+                                     :rounded
+                                     (= avg)))]
     (when-not valid-constituents?
       (l/log :error "Invalid recalculated RCP average" {:recalculated-avg recalculated-avg
                                                         :avg avg
+                                                        :start-date start-date
+                                                        :end-date end-date
                                                         :constituents constituents
                                                         :vals-by-src-date vals-by-src-date}))
     (cb {:retrieved-at (java.time.Instant/now)
@@ -122,7 +129,9 @@
          :start-date start-date
          :constituents constituents
          :valid? valid-constituents?
-         :exact (:exact recalculated-avg)})))
+         :exact (if valid-constituents?
+                  (:exact recalculated-avg)
+                  avg)})))
 
 (defn get-current [cb]
   (h/get
