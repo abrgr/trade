@@ -11,7 +11,7 @@
                  {:contract-id 12346, :target-price 0.22803119453537668, :target-mins 120.0, :trade-type :buy-yes, :price 0.094M, :qty 18.0}],
    :outstanding-orders-by-contract-id {13960 [],
                                        13962 [],
-                                       13964 [{:order-id 23193437, :contract-id 13964, :qty 25, :price 0.75M, :trade-type :buy-no, :created-at "2019-01-22T22:15:41.360Z", :cancellable? true}],
+                                       13964 [{:order-id 23193437, :contract-id 13964, :qty 25, :price 0.77M, :trade-type :buy-no, :created-at "2019-01-22T22:15:41.360Z", :cancellable? true}],
                                        13961 [],
                                        13966 [{:order-id 23193426, :contract-id 13966, :qty 25, :price 0.5M, :trade-type :buy-no, :created-at "2019-01-22T22:13:55.160Z", :cancellable? true}],
                                        13963 [],
