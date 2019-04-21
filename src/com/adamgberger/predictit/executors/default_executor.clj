@@ -140,7 +140,8 @@
                 current-holding (* current-qty (:avg-price-paid current))
                 desired-side-sell (-> desired-side sell-trade-type-for-side)
                 opp-side-sell (-> desired-side opposite-side sell-trade-type-for-side)
-                {desired-price :price desired-qty :qty} pos
+                {desired-price :price} pos
+                desired-qty (* (quot (:qty pos) 5) 5)
                 cur-qty (if (= desired-side current-side)
                           current-qty
                           0)
