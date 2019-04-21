@@ -150,7 +150,7 @@
   (let [handler #(l/log :info "Current state" {:state (deref-map state)})]
     (utils/repeatedly-until-closed
      handler
-     20000
+     60000
      #(l/log :warn "Stopping state watchdog")
      end-chan)))
 
@@ -254,12 +254,18 @@
 
 (defn run-executor [state end-chan]
   (let [venue-id (-> state :venues first v/id)]
-    (utils/add-guarded-watch-in
+    ; TODO: really want to make sure we re-evaluate every so often regardless of updates
+    ;       we may have unfinished business from our last set of trades (e.g. we submitted cancels but not yet buys & sells)
+    (utils/add-guarded-watch-ins
      (:venue-state state)
      ::run-executor
-     [venue-id :req-pos]
+     [[venue-id :req-pos]
+      [venue-id :pos]
+      [venue-id :bal]
+      [venue-id :orders]
+      [venue-id :order-books]]
      not=
-     (partial exec/execute-trades state end-chan venue-id))))
+     #(exec/execute-trades state end-chan venue-id (first %)))))
 
 (defn run-trading [cfg end-chan]
   (let [state {:venues (->> (vs/venue-makers)
