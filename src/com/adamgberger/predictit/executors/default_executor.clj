@@ -246,10 +246,10 @@
                                    :cancel
                                    :trade)))
 (defmethod submit-for-execution :cancel
-  [venue mkt-id {:keys [order-id]}]
-  (l/log :info "Cancelling order" {:mkt-id mkt-id :order-id order-id})
+  [venue mkt-id {:keys [contract-id order-id price qty]}]
+  (l/log :info "Cancelling order" {:mkt-id mkt-id :order-id order-id :contract-id contract-id})
   (v/cancel-order venue mkt-id order-id)
-  {:cancelled order-id})
+  {:cancelled {:mkt-id mkt-id :contract-id contract-id :order-id order-id :trade-type :cancel :qty qty :price price}})
 (defmethod submit-for-execution :trade
   [venue mkt-id {:keys [contract-id trade-type qty price]}]
   (l/log :info "Submitting order" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
