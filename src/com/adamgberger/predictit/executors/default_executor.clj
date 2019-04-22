@@ -385,7 +385,8 @@
                                        (map :cancelled)
                                        (filter some?)
                                        (group-by :contract-id)
-                                       (map #(into #{} %)))
+                                       (map #(vector (first %) (->> % second (map :order-id) (into #{}))))
+                                       (into {}))
                         to-add (->> orders
                                     (map :submitted)
                                     (filter some?)
@@ -404,11 +405,11 @@
                                 (fn [contract-id]
                                   (let [existing (get-in orders-by-contract-id [contract-id :orders])
                                         add (get to-add contract-id)
-                                        rem (or (get to-remove contract-id) #{})]
+                                        rm (or (get to-remove contract-id) #{})]
                                     [contract-id
                                      {:valid? true
                                       :orders (->> add
-                                                   (concat (filter #(->> % :order-id rem not) existing))
+                                                   (concat (filter #(->> % :order-id rm not) existing))
                                                    (into []))}])))
                                (into {}))))))
                     (l/log :info "Trades" {:bankroll bankroll
