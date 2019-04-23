@@ -18,13 +18,16 @@
        (map #(* (:qty %) (:avg-price-paid %)))
        (reduce + 0.0)))
 
+(defn- round-down-to-multiple-of [mult n]
+  (int (* (quot n mult) mult)))
+
 (defn- desired-pos-for-req-pos [bankroll req-pos]
   {:contract-id (:contract-id req-pos)
    :target-price (:est-value req-pos)
    :target-mins (:fill-mins req-pos)
    :trade-type (:trade-type req-pos)
    :price (:price req-pos)
-   :qty (Math/floor (/ (* (:desired bankroll) (:weight req-pos)) (:price req-pos)))})
+   :qty (round-down-to-multiple-of 5 (/ (* (:desired bankroll) (:weight req-pos)) (:price req-pos)))})
 
 (def side-for-trade-type
   {:buy-yes :yes
@@ -140,8 +143,7 @@
                 current-holding (* current-qty (:avg-price-paid current))
                 desired-side-sell (-> desired-side sell-trade-type-for-side)
                 opp-side-sell (-> desired-side opposite-side sell-trade-type-for-side)
-                {desired-price :price} pos
-                desired-qty (* (quot (:qty pos) 5) 5)
+                {desired-price :price desired-qty :qty} pos
                 cur-qty (if (= desired-side current-side)
                           current-qty
                           0)
