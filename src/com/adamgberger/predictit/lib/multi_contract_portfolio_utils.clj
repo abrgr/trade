@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.lib.multi-contract-portfolio-utils
-  (:require [com.adamgberger.predictit.lib.log :as l])
+  (:require [clojure.core.memoize :as memo]
+            [com.adamgberger.predictit.lib.log :as l])
   (:import (de.xypron.jcobyla Calcfc
                               Cobyla
                               CobylaExitStatus))
@@ -49,26 +50,10 @@
 (defn- exp-return [{:keys [est-value price]}]
   (/ (- est-value price) price))
 
-(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob remaining-attempts]
-  (let [filtered-contracts (->> contracts-price-and-prob
-                                (filter #(> (exp-return %) hurdle-return))
-                                (map
-                                 #(assoc
-                                   %
-                                   :prob
-                                   (-> %
-                                       :prob
-                                       java.math.BigDecimal.
-                                       (.round (java.math.MathContext. 4))
-                                       double))))
-        total-prob (->> filtered-contracts
-                        (map :prob)
-                        (reduce + 0.0))
-        remaining-prob (- 1 total-prob)
-        contracts (if (> remaining-prob 0.0)
-                    (conj filtered-contracts {:prob remaining-prob :cash? true})
-                    filtered-contracts)
-        len (count contracts)
+(declare -get-optimal-bets)
+
+(defn- -bets-for-contracts [contracts]
+  (let [len (count contracts)
           ; constraints are represented as functions that must be non-negative
         non-neg-constraints (map
                              (fn [^Integer i]
@@ -97,18 +82,46 @@
                                contracts)
                               (filter (comp not :cash?)) ; remove the cash contract we added
                               (into []))]
-        (l/log :info "Optimized portfolio" {:contracts contracts
-                                            :orig-contracts contracts-price-and-prob
-                                            :result with-weights
-                                            :opt-result res})
-        with-weights)
+        {:result with-weights})
+      {:error res})))
+
+; memoize to make our stochastic optimizer deterministic
+(def ^:private bets-for-contracts (memo/lru -bets-for-contracts :lru/threshold 1000))
+
+(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob remaining-attempts]
+  (let [filtered-contracts (->> contracts-price-and-prob
+                                (filter #(> (exp-return %) hurdle-return))
+                                (map
+                                 #(assoc
+                                   %
+                                   :prob
+                                   (-> %
+                                       :prob
+                                       java.math.BigDecimal.
+                                       (.round (java.math.MathContext. 4))
+                                       double))))
+        total-prob (->> filtered-contracts
+                        (map :prob)
+                        (reduce + 0.0))
+        remaining-prob (- 1 total-prob)
+        contracts (if (> remaining-prob 0.0)
+                    (conj filtered-contracts {:prob remaining-prob :cash? true})
+                    filtered-contracts)
+        result (bets-for-contracts contracts)]
+    (if (:error result)
       (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
                                                         :orig-contracts contracts-price-and-prob
-                                                        :opt-result res})
-          (if (> remaining-attempts 0)
-                    ; we may get diverging rounding errors for some initial weights, try again with new random weights
-            (-get-optimal-bets hurdle-return contracts-price-and-prob (dec remaining-attempts))
-            [])))))
+                                                        :opt-result (:error result)
+                                                        :remaining-attempts remaining-attempts})
+        (if (> remaining-attempts 0)
+          ; we may get diverging rounding errors for some initial weights, try again with new random weights
+          (-get-optimal-bets hurdle-return contracts-price-and-prob (dec remaining-attempts))
+          []))
+      (do (l/log :info "Optimized portfolio" {:contracts contracts
+                                              :orig-contracts contracts-price-and-prob
+                                              :result (:result result)
+                                              :opt-result CobylaExitStatus/NORMAL})
+        (:result result)))))
 
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
   (-get-optimal-bets hurdle-return contracts-price-and-prob 5))
