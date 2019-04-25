@@ -86,7 +86,7 @@
       {:error res})))
 
 ; memoize to make our stochastic optimizer deterministic
-(def ^:private bets-for-contracts (memo/lru -bets-for-contracts :lru/threshold 1000))
+(def ^:private bets-for-contracts (memo/lru -bets-for-contracts :lru/threshold 100))
 
 (defn- -get-optimal-bets [hurdle-return contracts-price-and-prob remaining-attempts]
   (let [filtered-contracts (->> contracts-price-and-prob
@@ -109,18 +109,20 @@
                     filtered-contracts)
         result (bets-for-contracts contracts)]
     (if (:error result)
-      (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
-                                                        :orig-contracts contracts-price-and-prob
-                                                        :opt-result (:error result)
-                                                        :remaining-attempts remaining-attempts})
+      (do
+        (l/log :error "Failed to optimize portfolio" {:contracts contracts
+                                                      :orig-contracts contracts-price-and-prob
+                                                      :opt-result (:error result)
+                                                      :remaining-attempts remaining-attempts})
         (if (> remaining-attempts 0)
           ; we may get diverging rounding errors for some initial weights, try again with new random weights
           (-get-optimal-bets hurdle-return contracts-price-and-prob (dec remaining-attempts))
           []))
-      (do (l/log :info "Optimized portfolio" {:contracts contracts
-                                              :orig-contracts contracts-price-and-prob
-                                              :result (:result result)
-                                              :opt-result CobylaExitStatus/NORMAL})
+      (do
+        (l/log :info "Optimized portfolio" {:contracts contracts
+                                            :orig-contracts contracts-price-and-prob
+                                            :result (:result result)
+                                            :opt-result CobylaExitStatus/NORMAL})
         (:result result)))))
 
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
