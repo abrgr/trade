@@ -98,7 +98,7 @@
                                    (-> %
                                        :prob
                                        java.math.BigDecimal.
-                                       (.round (java.math.MathContext. 4))
+                                       (.round (java.math.MathContext. 2))
                                        double))))
         total-prob (->> filtered-contracts
                         (map :prob)
@@ -114,6 +114,7 @@
                                                       :orig-contracts contracts-price-and-prob
                                                       :opt-result (:error result)
                                                       :remaining-attempts remaining-attempts})
+        (memo/memo-clear! bets-for-contracts [contracts]) ; never cache errors
         (if (> remaining-attempts 0)
           ; we may get diverging rounding errors for some initial weights, try again with new random weights
           (-get-optimal-bets hurdle-return contracts-price-and-prob (dec remaining-attempts))

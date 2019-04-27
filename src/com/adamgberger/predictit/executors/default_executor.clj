@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.executors.default-executor
-  (:require [com.adamgberger.predictit.lib.utils :as utils]
+  (:require [clojure.core.async :as async]
+            [com.adamgberger.predictit.lib.utils :as utils]
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.lib.execution-utils :as exec-utils]
             [com.adamgberger.predictit.venues.venue :as v]))
@@ -297,7 +298,7 @@
     {:permitted? permitted?
      :buying-power bp}))
 
-(defn execute-trades [state end-chan venue-id req-pos-by-strat-id]
+(defn -execute-trades [state end-chan venue-id req-pos-by-strat-id]
   (l/with-log :info "Executing trades"
     (let [venue-state @(:venue-state state)
           {:keys [cfg]} state
@@ -420,3 +421,17 @@
                                            :outstanding-orders-by-contract-id outstanding-orders-by-contract-id
                                            :trades trades
                                            :orders orders})))))))))))
+
+(def ^:private execute-trades-chan (async/chan))
+
+(async/go-loop []
+  (let [{:keys [state end-chan venue-id req-pos-by-strat-id]} (async/<! execute-trades-chan)]
+    (-execute-trades state end-chan venue-id req-pos-by-strat-id))
+  (async/<! (async/timeout 1000))
+  (recur))
+
+(defn execute-trades [state end-chan venue-id req-pos-by-strat-id]
+  (async/put! execute-trades-chan {:state state
+                                   :end-chan end-chan
+                                   :venue-id venue-id
+                                   :req-pos-by-strat-id req-pos-by-strat-id}))
