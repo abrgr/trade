@@ -1,4 +1,8 @@
 version: "2"
+
+networks:
+  main:
+
 services:
   lein:
     image: clojure:lein-2.8.3-alpine
@@ -7,3 +11,16 @@ services:
       - "./.m2:/root/.m2"
     entrypoint: ["lein"]
     working_dir: "/usr/src/app"
+    networks:
+      main:
+        aliases:
+          - trader
+  prometheus:
+    image: prom/prometheus:v2.9.2
+    volumes:
+      - "./prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+      - "./prometheus-data:/prometheus:rw"
+    ports:
+      - "9090:9090"
+    links:
+      - "lein:trader"
