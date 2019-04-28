@@ -324,7 +324,7 @@
      upd)))
 
 (defn- round-rcp [a]
-  (.setScale 1 java.math.RoundingMode/HALF_UP))
+  (.setScale a 1 java.math.RoundingMode/HALF_UP))
 
 (defn maintain-major-input-changes [state strat-state end-chan]
     ; TODO: make a decent macro for this

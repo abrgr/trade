@@ -106,7 +106,7 @@
                                      %
                                      {:prob round2
                                       :est-value round2
-                                      :price round2})))
+                                      :price (comp bigdec round2)})))
         total-prob (->> filtered-contracts
                         (map :prob)
                         (reduce + 0.0))
