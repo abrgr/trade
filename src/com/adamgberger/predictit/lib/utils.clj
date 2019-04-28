@@ -5,8 +5,6 @@
             [com.adamgberger.predictit.lib.log :as l])
   (:gen-class))
 
-(def price-mc (java.math.MathContext. 2 java.math.RoundingMode/HALF_UP))
-
 (declare merge-deep)
 
 (defn deep-merger [v1 v2]
@@ -43,7 +41,7 @@
 (defn to-price [n]
   (-> n
       to-decimal
-      (.round price-mc)))
+      (.setScale 2 java.math.RoundingMode/HALF_UP)))
 
 (defn parse-ext-iso-date
   "E.x. 1986-11-22"
@@ -231,3 +229,10 @@
                   old-vs (map (partial get-in old) keypaths)]
               (when (guard old-vs new-vs) (f new-vs))))]
     (add-watch agt id w)))
+
+(defn map-xform [m xforms]
+  (reduce
+    (fn [m [k xform]]
+      (update m k xform))
+    m
+    xforms))

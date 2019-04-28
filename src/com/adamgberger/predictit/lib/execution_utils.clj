@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.lib.execution-utils
-  (:require [com.adamgberger.predictit.lib.log :as l])
+  (:require [com.adamgberger.predictit.lib.log :as l]
+            [com.adamgberger.predictit.lib.utils :as u])
   (:gen-class))
 
 (def keypath-by-trade-type
@@ -138,8 +139,7 @@
                                             (some? order-book-cur-best))
                                      (- order-book-cur-best 0.1)
                                      0.01))
-                              bigdec
-                              (.round mc))]
+                              u/to-price)]
          (l/log :info "Calculated likely fill" {:likely-price likely-price
                                                 :usable-price usable-price
                                                 :mins mins

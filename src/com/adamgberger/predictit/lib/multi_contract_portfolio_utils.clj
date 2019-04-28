@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.lib.multi-contract-portfolio-utils
   (:require [clojure.core.memoize :as memo]
+            [com.adamgberger.predictit.lib.utils :as u]
             [com.adamgberger.predictit.lib.log :as l])
   (:import (de.xypron.jcobyla Calcfc
                               Cobyla
@@ -50,6 +51,15 @@
 (defn- exp-return [{:keys [est-value price]}]
   (/ (- est-value price) price))
 
+(defn- round [s n]
+  (-> n
+      java.math.BigDecimal.
+      (.setScale s java.math.RoundingMode/HALF_UP)
+      double))
+
+(def ^:private round2 (partial round 2))
+(def ^:private round4 (partial round 4))
+
 (declare -get-optimal-bets)
 
 (defn- -bets-for-contracts [contracts]
@@ -73,12 +83,12 @@
               (* -1 (growth-rate (map #(assoc %1 :wager %2) contracts x)))))
         weights (double-array len (map (fn [_] (rand)) (range len)))
         rho-start 0.5
-        rho-end 1.0e-6
+        rho-end 1.0e-4
         res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 1e5)]
     (if (= CobylaExitStatus/NORMAL res)
       (let [with-weights (->> weights
                               (map
-                               #(assoc %1 :weight (max 0 %2)) ; need the max here to get rid of double artifacts that break our non-neg constraint
+                               #(assoc %1 :weight (round4 (max 0 %2))) ; need the max here to get rid of double artifacts that break our non-neg constraint
                                contracts)
                               (filter (comp not :cash?)) ; remove the cash contract we added
                               (into []))]
@@ -92,14 +102,11 @@
   (let [filtered-contracts (->> contracts-price-and-prob
                                 (filter #(> (exp-return %) hurdle-return))
                                 (map
-                                 #(assoc
-                                   %
-                                   :prob
-                                   (-> %
-                                       :prob
-                                       java.math.BigDecimal.
-                                       (.round (java.math.MathContext. 2))
-                                       double))))
+                                  #(u/map-xform
+                                     %
+                                     {:prob round2
+                                      :est-value round2
+                                      :price round2})))
         total-prob (->> filtered-contracts
                         (map :prob)
                         (reduce + 0.0))

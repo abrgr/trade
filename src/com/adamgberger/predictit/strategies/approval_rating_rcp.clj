@@ -9,7 +9,6 @@
 (def venue-id :com.adamgberger.predictit.venues.predictit/predictit)
 (def rcp-estimate-id :com.adamgberger.predictit.estimators.approval-rating-rcp/id)
 
-(def rcp-math-ctx (java.math.MathContext. 1 java.math.RoundingMode/HALF_UP))
 (def pricing-math-ctx (java.math.MathContext. 2 java.math.RoundingMode/HALF_UP))
 
 (def confidence (utils/to-decimal "0.8"))
@@ -324,6 +323,9 @@
      valid?
      upd)))
 
+(defn- round-rcp [a]
+  (.setScale 1 java.math.RoundingMode/HALF_UP))
+
 (defn maintain-major-input-changes [state strat-state end-chan]
     ; TODO: make a decent macro for this
   (letfn [(upd [_]
@@ -331,7 +333,7 @@
           (valid? [^java.math.BigDecimal old ^java.math.BigDecimal new]
             (and (some? new)
                  (and (some? old)
-                      (not= (.round old rcp-math-ctx) (.round new rcp-math-ctx)))))]
+                      (not= (round-rcp old) (round-rcp new)))))]
     (utils/add-guarded-watch-in
      (:estimates state)
      ::maintain-major-input-changes
