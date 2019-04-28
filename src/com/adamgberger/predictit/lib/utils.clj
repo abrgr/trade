@@ -33,10 +33,7 @@
 (defn to-decimal [n]
   (if (nil? n)
     nil
-    (cond
-      (instance? String n) (java.math.BigDecimal. ^String n)
-      (instance? Double n) (java.math.BigDecimal. ^Double n)
-      :else (java.math.BigDecimal. n))))
+    (bigdec n)))
 
 (defn to-price [n]
   (-> n

@@ -53,7 +53,7 @@
 
 (defn- round [s n]
   (-> n
-      java.math.BigDecimal.
+      bigdec
       (.setScale s java.math.RoundingMode/HALF_UP)
       double))
 

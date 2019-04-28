@@ -62,7 +62,7 @@
                                            (.divide ^java.math.BigDecimal (:sum %) ^java.math.BigDecimal (:count %) (java.math.MathContext. 6 java.math.RoundingMode/HALF_UP)))))]
     (if (nil? avg)
       nil
-      {:rounded (.setScale avg 2 java.math.RoundingMode/HALF_UP)
+      {:rounded (.setScale avg 1 java.math.RoundingMode/HALF_UP)
        :exact avg})))
 
 (defn- get-constituents [start-date end-date vals-by-src-date]

@@ -20,7 +20,7 @@
                    (map #(java.time.LocalDate/parse % date-pat)))
         vals (->> (get-child h 5)
                   (map #(.substring % 0 (dec (count %))))
-                  (map #(BigDecimal. %)))
+                  (map bigdec))
         data (map
               (fn [date val] [date val])
               dates
