@@ -28,6 +28,8 @@
 
 (def cm (conn-mgr/make-reusable-conn-manager {:timeout 10 :threads 30}))
 
+(def async-cm (conn/make-reuseable-async-conn-manager {:timeout 10})
+
 (def cs (cookies/cookie-store))
 
 (defn http-post [url opts]
@@ -42,19 +44,27 @@
     merged-opts (utils/merge-deep def-opts opts)]
     (h/post url merged-opts)))
 
+(def ^:private default-headers
+  {"User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36"
+   "Accept-Language" "en-US,en;q=0.9"
+   "Accept" "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"
+   "Cache-Control" "no-cache"
+   "Pragma" "no-cache"})
+
 (defn http-get
   ([url] (http-get url {}))
   ([url opts]
-   (let
-    [def-opts {:connection-manager cm
-               :cookie-store cs
-               :headers {"User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36"
-                         "Accept-Language" "en-US,en;q=0.9"
-                         "Accept" "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"
-                         "Cache-Control" "no-cache"
-                         "Pragma" "no-cache"}}
-     merged-opts (utils/merge-deep def-opts opts)]
-     (h/get url merged-opts))))
+   (let [def-opts {:connection-manager cm
+                   :cookie-store cs
+                   :headers default-headers}
+         merged-opts (utils/merge-deep def-opts opts)]
+     (h/get url merged-opts)))
+  ([url opts send-result send-error]
+   (let [def-opts {:connection-manager async-cm
+                   :cookie-store cs
+                   :headers default-headers}
+         merged-opts (utils/merge-deep def-opts opts {:async? true})]
+     (h/get url merged-opts send-result send-error))))
 
 (defn from-page [page]
     ; (http-get page) ; try to emulate a browser
@@ -187,26 +197,38 @@
                      ...]
         }
         ...]}}"
-  [auth]
-  (l/with-log :debug "Retrieving markets"
-    (let [headers (->> (from-page (predictit-site-url "/markets"))
-                       (merge (json-req))
-                       (merge (with-auth auth)))
-          value-fns {:endDate utils/parse-localish-datetime
-                     :startDate utils/parse-isoish-datetime}]
-      (loop [page 1
-             markets []]
-        (Thread/sleep (+ 200 (rand-int 200))) ; just to play nice...
-        (let [qs (str "?itemsPerPage=20&page=" page "&filterIds=&sort=traded&sortParameter=ALL")
-              url (predictit-api-url (str "/Browse/FilteredMarkets/0" qs))
-              resp (http-get url {:headers headers})]
-          (when-not (-> resp :body some?)
-            (throw (ex-info "Bad markets response" {:resp resp})))
-          (let [{total-pages :totalPages
-                 page-markets :markets} (resp-from-json resp value-fns)]
-            (if (< page total-pages)
-              (recur (inc page) (concat markets page-markets))
-              {:markets (concat markets page-markets)})))))))
+  [auth send-result]
+  (let [headers (->> (from-page (predictit-site-url "/markets"))
+                     (merge (json-req))
+                     (merge (with-auth auth)))
+        value-fns {:endDate utils/parse-localish-datetime
+                   :startDate utils/parse-isoish-datetime}
+        ch (async/chan)
+        handle-resp (fn [page markets resp]
+                      (if (-> resp :body nil?)
+                        (do (async/close! ch)
+                            (send-result (ex-info "Bad markets response" {:resp resp})))
+                        (let [{total-pages :totalPages
+                               page-markets :markets} (resp-from-json resp value-fns)]
+                          (if (< page total-pages)
+                            (async/put! ch {:page (inc page)
+                                            :markets (concat markets page-markets)})
+                            (do (async/close! ch)
+                                (send-result {:markets (concat markets page-markets)}))))))]
+    (async/go-loop []
+      (async/<! (async/timeout (+ 200 (rand-int 200)))) ; just to play nice...
+      (let [{:keys [page markets] :as c} (async/<! ch)]
+        (when (some? c)
+          (let [qs (str "?itemsPerPage=20&page=" page "&filterIds=&sort=traded&sortParameter=ALL")
+                url (predictit-api-url (str "/Browse/FilteredMarkets/0" qs))
+                resp (http-get url {:headers headers})]
+            (http-get
+              url
+              {:headers headers}
+              handle-resp
+              #(do (async/close! ch)
+                   (send-result %))))
+          (recur))))))
 
 (def numeric-trade-types
   {:buy-no   0

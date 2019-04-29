@@ -2,6 +2,7 @@
   (:require [clojure.core.async :as async]
             [com.adamgberger.predictit.lib.utils :as utils]
             [com.adamgberger.predictit.lib.log :as l]
+            [com.adamgberger.predictit.lib.observable-state :as obs]
             [com.adamgberger.predictit.venues :as vs]
             [com.adamgberger.predictit.venues.venue :as v]
             [com.adamgberger.predictit.strategies :as strats]
@@ -252,21 +253,6 @@
            (doseq [to-add added]
              (maintain-order-book state end-chan venue-id venue to-add))))))))
 
-(defn run-executor [state end-chan]
-  (let [venue-id (-> state :venues first v/id)]
-    ; TODO: really want to make sure we re-evaluate every so often regardless of updates
-    ;       we may have unfinished business from our last set of trades (e.g. we submitted cancels but not yet buys & sells)
-    (utils/add-guarded-watch-ins
-     (:venue-state state)
-     ::run-executor
-     [[venue-id :req-pos]
-      [venue-id :pos]
-      [venue-id :bal]
-      [venue-id :orders]
-      [venue-id :order-books]]
-     not=
-     #(exec/execute-trades state end-chan venue-id (first %)))))
-
 (defn run-trading [cfg end-chan]
   (let [state {:venues (->> (vs/venue-makers)
                             (map #(% (:creds cfg)))
@@ -278,9 +264,31 @@
                :strats {}
                :inputs (l/logging-agent "inputs" (agent {}))
                :estimates (l/logging-agent "estimates" (agent {}))}
-        state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))]
-    (run-executor state end-chan)
-    (maintain-markets state end-chan)
+        state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))
+        obs-state (obs/observable-state
+                    {:cfg cfg}
+                    {:venue-predictit/executions
+                      {:compute-producer execute-trades
+                       :periodicity {:at-least-every-ms 30000
+                                     :jitter-pct 0.2}
+                       :param-keypaths [:cfg
+                                        :venue-predictit/mkts
+                                        :venue-predictit/contracts
+                                        :venue-predictit/venue
+                                        :venue-predictit/req-order-books
+                                        :venue-predictit/req-pos
+                                        :venue-predictit/pos
+                                        :venue-predictit/bal
+                                        :venue-predictit/orders
+                                        :venue-predictit/order-books]}
+                     :venue-predictit/mkts
+                      {:io-producer (fn [{{:venue-predictit/keys [venue]} :partial-state} send-result]
+                                      (v/available-markets venue send-result))
+                       :periodicity {:at-least-every-ms 600000
+                                     :jitter-pct 0.2}
+                       :param-keypaths [:venue-predictit/venue]}}
+
+                    :logger l/log)]
     (maintain-balances state end-chan)
     (maintain-positions state end-chan)
     (maintain-order-books state end-chan)

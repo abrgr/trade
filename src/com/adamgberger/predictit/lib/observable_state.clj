@@ -15,6 +15,7 @@
   (with-meta obj (merge (meta obj) m)))
 
 (defn- on-result [update-path send-update new-state prev keypath {:keys [validator] :as cfg} result]
+  ; TODO: handle case where result is a throwable
   (let [valid? (or (nil? validator)
                    (validator result))
         effective-result (if valid?

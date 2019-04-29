@@ -4,7 +4,7 @@
 (defprotocol Venue
   (id [venue])
   (current-available-balance [venue])
-  (available-markets [venue])
+  (available-markets [venue send-result])
   (positions [venue])
   (contracts [venue market-id full-market-url])
   (orders [venue market-id full-market-url contract-id])

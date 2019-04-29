@@ -13,19 +13,23 @@
     (get-in bal [:balance :accountBalanceDecimal])))
 
 (defn- -available-markets
-  [venue]
+  [venue send-result]
   (let [adapt-mkt (fn [m]
                     {:market-id (:marketId m)
                      :market-name (:marketName m)
                      :market-url (str "https://www.predictit.org/markets/detail/" (:marketId m) "/" (:marketUrl m))
                      :total-trades (:totalTrades m)
                      :total-shares-traded (:totalSharesTraded m)
-                     :status (if (= (:status m) "Open") :open :closed)})
-        mkts (api/get-markets (:auth venue))]
-    (->> mkts
-         :markets
-         (map adapt-mkt)
-         (into []))))
+                     :status (if (= (:status m) "Open") :open :closed)})]
+    (api/get-markets
+      (:auth venue)
+      #(if (instance? Throwable %)
+          (send-result %)
+          (->> %
+               :markets
+               (map adapt-mkt)
+               (into [])
+               send-result)))))
 
 (def side-by-trade-type
   (utils/rev-assoc api/numeric-trade-types))
@@ -203,8 +207,8 @@
       (id [this] ::predictit)
       (current-available-balance [this]
         (with-reauth creds auth (-current-available-balance @auth)))
-      (available-markets [this]
-        (with-reauth creds auth (-available-markets @auth)))
+      (available-markets [this send-result]
+        (with-reauth creds auth (-available-markets @auth send-result)))
       (positions [this]
         (with-reauth creds auth (-positions @auth)))
       (contracts [this market-id full-market-url]
