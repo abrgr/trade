@@ -3,11 +3,11 @@
 
 (defprotocol Venue
   (id [venue])
-  (current-available-balance [venue])
+  (current-available-balance [venue send-result])
   (available-markets [venue send-result])
-  (positions [venue])
-  (contracts [venue market-id full-market-url])
-  (orders [venue market-id full-market-url contract-id])
-  (monitor-order-book [venue market-id full-market-url contract-id])
-  (submit-order [venue mkt-id contract-id trade-type qty price])
-  (cancel-order [venue mkt-id order-id]))
+  (positions [venue send-result])
+  (contracts [venue market-id full-market-url send-results])
+  (orders [venue market-id full-market-url contract-id send-results])
+  (order-book [venue market-id full-market-url contract-id send-results])
+  (submit-order [venue mkt-id contract-id trade-type qty price send-results])
+  (cancel-order [venue mkt-id order-id send-results]))
