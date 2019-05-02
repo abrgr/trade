@@ -111,28 +111,6 @@
    {}
    (strats/all)))
 
-(defn maintain-balances [state end-chan]
-  ; we kick off a go-routine that polls balance in each venue
-  ; and updates venue-state with the results.
-
-  (letfn [(get-bal [venue]
-            (let [bal (v/current-available-balance venue)]
-              (l/log :info "Found balance for venue" {:venue-id (v/id venue)
-                                                      :balance bal})
-              bal))]
-    (maintain-venue-state :bal 600000 get-bal state end-chan)))
-
-(defn maintain-positions [state end-chan]
-  ; we kick off a go-routine that polls balance in each venue
-  ; and updates venue-state with the results.
-
-  (letfn [(get-pos [venue]
-            (let [pos (v/positions venue)]
-              (l/log :info "Found positions for venue" {:venue-id (v/id venue)
-                                                        :pos pos})
-              pos))]
-    (maintain-venue-state :pos 60000 get-pos state end-chan)))
-
 (defn deref-map [m]
   (->> m
        (map (fn [[k v]]
@@ -265,11 +243,18 @@
                :inputs (l/logging-agent "inputs" (agent {}))
                :estimates (l/logging-agent "estimates" (agent {}))}
         state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))
+        twice-per-minute 30000
+        once-per-minute (* 2 twice-per-minute)
+        once-per-10-minutes (* once-per-minute 10)
         obs-state (obs/observable-state
-                    {:cfg cfg}
+                    (fn [send-result]
+                      (v/make-venue
+                        cfg
+                        #(send-result
+                          (merge {:cfg cfg} {:venue-predictit/venue %}))))
                     {:venue-predictit/executions
                       {:compute-producer execute-trades
-                       :periodicity {:at-least-every-ms 30000
+                       :periodicity {:at-least-every-ms twice-per-minute
                                      :jitter-pct 0.2}
                        :param-keypaths [:cfg
                                         :venue-predictit/mkts
@@ -284,13 +269,24 @@
                      :venue-predictit/mkts
                       {:io-producer (fn [{{:venue-predictit/keys [venue]} :partial-state} send-result]
                                       (v/available-markets venue send-result))
-                       :periodicity {:at-least-every-ms 600000
+                       :periodicity {:at-least-every-ms once-per-10-minutes
                                      :jitter-pct 0.2}
-                       :param-keypaths [:venue-predictit/venue]}}
+                       :param-keypaths [:venue-predictit/venue]}
+                     :venue-predictit/bal
+                      {:io-producer (fn [{{:venue-predictit/keys [venue]} :partial-state} send-result]
+                                      (v/current-available-balance venue send-result))
+                       :periodicity {:at-least-every-ms once-per-10-minutes
+                                    :jitter-pct 0.2}
+                       :param-keypaths [:venue-predictit/venue]}
+                     :venue-predictit/pos
+                      {:io-producer (fn [{{:venue-predictit/keys [venue]} :partial-state} send-result]
+                                      (v/positions venue send-result))
+                       :periodicity {:at-least-every-ms once-per-minute
+                                    :jitter-pct 0.2}
+                       :param-keypaths [:venue-predictit/venue]}
+                      }
 
                     :logger l/log)]
-    (maintain-balances state end-chan)
-    (maintain-positions state end-chan)
     (maintain-order-books state end-chan)
     (maintain-orders state end-chan)
     (estimators/start-all (:estimators cfg) state end-chan)

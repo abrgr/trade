@@ -209,64 +209,66 @@
      Cfg may specify:
       - a :logger that is a function of level (:info, :warn, :error), msg (string), and param map ({})."
   ([init producer-cfg-by-keypath & {:keys [logger] :or {logger prn}}]
-   (let [state (atom init)
-         updates-chan (async/chan)
-         txn-chan (async/chan)
-         p (async/pub updates-chan :keypath)
-         all-ancestors (ancestors-for-all (->> producer-cfg-by-keypath
-                                               (map (fn [[keypath {:keys [param-keypaths]}]]
-                                                      {:task keypath
-                                                       :depends-on param-keypaths}))
-                                               (into {})))
-         next-nodes (->> producer-cfg-by-keypath
-                         (reduce
-                          (fn [descendants [keypath {:keys [param-keypaths]}]]
-                            (->> param-keypaths
-                                 (reduce
-                                  (fn [descs param]
-                                    (update descs param #(conj %1 keypath)))
-                                  descendants)))
-                          {}))
-         descendants (transitive-closure next-nodes)
-         terminal-node? (->> producer-cfg-by-keypath
-                             keys
-                             (filter #(= (count (next-nodes %)) 0))
-                             (into #{}))
-         projections (->> producer-cfg-by-keypath
-                          keys
-                          (filter #(some? (get-in producer-cfg-by-keypath [% :projection])))
-                          (into #{}))
-         start-txn (fn [source keypath]
-                     (async/go (async/>! txn-chan {:action :start
-                                                   :update-path []
-                                                   :txn-id (java.util.UUID/randomUUID)
-                                                   :origin-keypath keypath
-                                                   :keypath keypath
-                                                   :txn-source source
-                                                   :new-state @state})))
-         send-update (fn [{:keys [update-path txn-id origin-keypath] :as update} keypath new-state]
-                       (async/go (if (terminal-node? keypath)
-                                   (async/>! txn-chan (assoc update :action :end))
-                                   (async/>! updates-chan {:update-path (conj update-path keypath)
-                                                           :txn-id txn-id
-                                                           :origin-keypath origin-keypath
-                                                           :keypath keypath
-                                                           :new-state new-state}))))]
-     (async/go-loop []
-       (when-let [{:keys [txn-id action] :as txn} (async/<! txn-chan)]
-         (if (not= action :start)
-           (logger :error "Expected start transaction" {:txn txn})
-           (do
-             (async/>! updates-chan (select-keys txn [:update-path :txn-id :origin-keypath :keypath :new-state]))
-             (when-let [{end-txn-id :txn-id end-action :action :as end-txn} (async/<! txn-chan)]
-               (if (not (and (= end-txn-id txn-id)
-                             (= end-action :end)))
-                 (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
-                 (send state #(merge % (apply dissoc new-state projections)))))))
-         (recur)))
-     (doseq [[keypath cfg] producer-cfg-by-keypath]
-       (register-producer logger state descendants all-ancestors start-txn send-update p keypath cfg))
-     state)))
+   (init (fn [init-state] ; TODO: init should probably be a DAG we process
+     ; TODO: handle (instance? Throwable init-state)
+     (let [state (atom init)
+           updates-chan (async/chan)
+           txn-chan (async/chan)
+           p (async/pub updates-chan :keypath)
+           all-ancestors (ancestors-for-all (->> producer-cfg-by-keypath
+                                                 (map (fn [[keypath {:keys [param-keypaths]}]]
+                                                        {:task keypath
+                                                         :depends-on param-keypaths}))
+                                                 (into {})))
+           next-nodes (->> producer-cfg-by-keypath
+                           (reduce
+                            (fn [descendants [keypath {:keys [param-keypaths]}]]
+                              (->> param-keypaths
+                                   (reduce
+                                    (fn [descs param]
+                                      (update descs param #(conj %1 keypath)))
+                                    descendants)))
+                            {}))
+           descendants (transitive-closure next-nodes)
+           terminal-node? (->> producer-cfg-by-keypath
+                               keys
+                               (filter #(= (count (next-nodes %)) 0))
+                               (into #{}))
+           projections (->> producer-cfg-by-keypath
+                            keys
+                            (filter #(some? (get-in producer-cfg-by-keypath [% :projection])))
+                            (into #{}))
+           start-txn (fn [source keypath]
+                       (async/go (async/>! txn-chan {:action :start
+                                                     :update-path []
+                                                     :txn-id (java.util.UUID/randomUUID)
+                                                     :origin-keypath keypath
+                                                     :keypath keypath
+                                                     :txn-source source
+                                                     :new-state @state})))
+           send-update (fn [{:keys [update-path txn-id origin-keypath] :as update} keypath new-state]
+                         (async/go (if (terminal-node? keypath)
+                                     (async/>! txn-chan (assoc update :action :end))
+                                     (async/>! updates-chan {:update-path (conj update-path keypath)
+                                                             :txn-id txn-id
+                                                             :origin-keypath origin-keypath
+                                                             :keypath keypath
+                                                             :new-state new-state}))))]
+       (async/go-loop []
+         (when-let [{:keys [txn-id action] :as txn} (async/<! txn-chan)]
+           (if (not= action :start)
+             (logger :error "Expected start transaction" {:txn txn})
+             (do
+               (async/>! updates-chan (select-keys txn [:update-path :txn-id :origin-keypath :keypath :new-state]))
+               (when-let [{end-txn-id :txn-id end-action :action :as end-txn} (async/<! txn-chan)]
+                 (if (not (and (= end-txn-id txn-id)
+                               (= end-action :end)))
+                   (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
+                   (send state #(merge % (apply dissoc new-state projections)))))))
+           (recur)))
+       (doseq [[keypath cfg] producer-cfg-by-keypath]
+         (register-producer logger state descendants all-ancestors start-txn send-update p keypath cfg))
+       state)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SPECS
