@@ -34,13 +34,6 @@
        (into #{})
        (into [])))
 
-(defn start-strategies [cfg state end-chan]
-  (reduce
-   (fn [strats next]
-     (merge strats (next cfg state end-chan)))
-   {}
-   (strats/all)))
-
 (defn deref-map [m]
   (->> m
        (map (fn [[k v]]
@@ -319,8 +312,11 @@
                                         :strategy-rcp/latest-major-input-change
                                         :venue-predictit/order-books
                                         :venue-predictit/orders
-                                        :estimators/approval-rcp]}
-                    :logger l/log})]
+                                        :estimators/approval-rcp]
+                       :periodicity {:at-least-every-ms once-per-10-seconds
+                                    :jitter-pct 0.2}}
+                    }
+                    :logger l/log)]
     (state-watchdog state end-chan)
     (async/<!! end-chan)))
 

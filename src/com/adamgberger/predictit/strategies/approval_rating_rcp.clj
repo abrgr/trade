@@ -6,12 +6,7 @@
             [com.adamgberger.predictit.lib.execution-utils :as execution-utils])
   (:gen-class))
 
-(def venue-id :com.adamgberger.predictit.venues.predictit/predictit)
-(def rcp-estimate-id :com.adamgberger.predictit.estimators.approval-rating-rcp/id)
-
 (def pricing-math-ctx (java.math.MathContext. 2 java.math.RoundingMode/HALF_UP))
-
-(def confidence (utils/to-decimal "0.8"))
 
 (defn is-relevant-mkt [mkt]
   (let [^String n (-> mkt
