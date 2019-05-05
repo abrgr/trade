@@ -138,7 +138,7 @@
    "https://www.realclearpolitics.com/epolls/other/president_trump_job_approval-6179.html"
    {:async? true}
    #(extract-current (:body %) cb)
-   #(l/log :error "Failed to get RCP approval" (l/ex-log-msg %))))
+   cb))
 
 (defn get-hist
   "Returns something like:
@@ -159,4 +159,4 @@
                             (into []))]
          (cb {:vals hist-vals
               :retrieved-at retrieved-at}))
-      #(l/log :error "Failed to get historical RCP" (l/ex-log-msg %))))))
+      cb))))

@@ -6,7 +6,10 @@
             [com.adamgberger.predictit.venues :as vs]
             [com.adamgberger.predictit.venues.venue :as v]
             [com.adamgberger.predictit.strategies :as strats]
-            [com.adamgberger.predictit.inputs :as inputs]
+            [com.adamgberger.predictit.inputs.approval-rating-rcp :as rcp-input]
+            [com.adamgberger.predictit.inputs.rasmussen :as rasmussen-input]
+            [com.adamgberger.predictit.inputs.yougov-weekly-registered :as yougov-weekly-input]
+            [com.adamgberger.predictit.inputs.approval-rating-the-hill:as the-hill-input]
             [com.adamgberger.predictit.estimators :as estimators]
             [com.adamgberger.predictit.executors.default-executor :as exec])
   (:gen-class))
@@ -80,6 +83,7 @@
                :inputs (l/logging-agent "inputs" (agent {}))
                :estimates (l/logging-agent "estimates" (agent {}))}
         state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))
+        once-per-10-seconds 10000
         twice-per-minute 30000
         once-per-minute (* 2 twice-per-minute)
         once-per-10-minutes (* once-per-minute 10)
@@ -227,7 +231,37 @@
                                     :jitter-pct 0.2}
                        :param-keypaths [:venue-predictit/venue :venue-predictit/pos :venue-predictit/mkts-by-id]}
                       }
-
+                     :inputs/rcp-current
+                      {:io-producer (fn [_ send-result]
+                                        (rcp-input/get-current send-result))
+                       :periodicity {:at-least-every-ms once-per-10-seconds
+                                    :jitter-pct 0.2}
+                       :param-keypaths []}
+                     :inputs/rcp-hist
+                      {:io-producer (fn [_ send-result]
+                                        (rcp-input/get-hist send-result))
+                       :periodicity {:at-least-every-ms once-per-10-minutes
+                                    :jitter-pct 0.2}
+                       :param-keypaths []}
+                     :inputs/rasmussen-current ; TODO: sometimes rasmussen doesn't return.  move to validator
+                      {:io-producer (fn [_ send-result]
+                                        (rasmussen-input/get-current send-result))
+                       :periodicity {:at-least-every-ms once-per-10-seconds
+                                    :jitter-pct 0.2}
+                       :param-keypaths []}
+                     :inputs/yougov-weekly-registered-current
+                      {:io-producer (fn [_ send-result]
+                                        (yougov-weekly-input/get-current send-result))
+                       :periodicity {:at-least-every-ms once-per-10-seconds
+                                    :jitter-pct 0.2}
+                       :param-keypaths []}
+                     :inputs/the-hill-current
+                      {:io-producer (fn [_ send-result]
+                                        (the-hill-input/get-current send-result))
+                       :periodicity {:at-least-every-ms once-per-minute
+                                    :jitter-pct 0.2}
+                       :param-keypaths []}
+                       }
                     :logger l/log)]
     (estimators/start-all (:estimators cfg) state end-chan)
     (inputs/start-all state end-chan)

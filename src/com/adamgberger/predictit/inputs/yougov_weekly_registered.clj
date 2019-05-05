@@ -73,4 +73,4 @@
    "https://today.yougov.com/ratings/overview(popup:search/%22economist%20tables%22;type=surveys;period=week)"
    {:async? true}
    #(check-search-results (:body %) cb)
-   #(l/log :error "Failed to get yougov-weekly-registered search results" (l/ex-log-msg %))))
+   cb))

@@ -39,4 +39,4 @@
        (str "http://www.rasmussenreports.com/public_content/politics/trump_administration/prez_track_" date)
        {:async? true}
        #(parse-result (:body %) cb)
-       #(l/log :error "Failed to get rasmussen report" (l/ex-log-msg %))))))
+       cb))))

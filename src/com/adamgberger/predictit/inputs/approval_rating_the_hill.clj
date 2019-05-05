@@ -158,7 +158,8 @@
 
 (defn get-current [cb]
   (let [html-chan (async/chan)
-        err-cb #(l/log :error "Failed to get the hill poll" (l/ex-log-msg %))]
+        err-cb #(do (l/log :error "Failed to get the hill poll" (l/ex-log-msg %))
+                    (cb %))]
     (h/get
      "https://thehill.com/hilltv/america"
      {:async? true}
@@ -171,7 +172,8 @@
          (async-thread (async-wrap-error article-html-to-sheet-url))
          (async-thread (async-wrap-error sheet-url-to-approval-val))
          (async/take 1)
-        ; TODO: add a timeout for success and failure case
+         ; TODO: add a timeout for success and failure case
          (async-thread (async-wrap-error #(do (cb %1) (async/close! %2))))
          (async-thread #(do (l/log :error "Error in the hill approval rating" (l/ex-log-msg %1))
-                            (async/close! %2))))))
+                            (async/close! %2)
+                            (cb %))))))
