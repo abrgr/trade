@@ -83,7 +83,7 @@
      {:mean (* mean-1 0.75)
       :std (* std-1 0.75)})))
 
-(defn- update-est [stats-for-days rcp rcp-hist rasmussen yougov thehill state]
+(defn- estimate [stats-for-days rcp rcp-hist rasmussen yougov thehill]
   (when (and (some? rcp) (some? rcp-hist))
     (let [{c :constituents
            valid? :valid?
@@ -126,36 +126,8 @@
                      (fn [[days {:keys [mean std]}]]
                        [days (dist-for-days days dist-by-days est [yougov rasmussen])]))
                     (into {}))]
-      (send (:estimates state) #(assoc
-                                 %
-                                 id
-                                 {:val est
-                                  :dists-by-day ests
-                                  :est-at (java.time.Instant/now)
-                                  :date rcp-date
-                                  :diff (- est rcp-val)})))))
-
-(defn run [cfg state end-chan]
-  (l/log :info "Starting RCP approval estimator")
-  (let [c (async/chan)
-        our-cfg (::id cfg)
-        {:keys [stats-for-days]} our-cfg]
-    (when (nil? stats-for-days)
-      (throw (ex-info "Bad config for rcp estimator" {:cfg our-cfg})))
-    (async/go-loop []
-      (let [[[rcp rcp-hist rasmussen yougov the-hill] ch] (async/alts! [c end-chan])]
-            ; TODO: add some checks to make sure we don't overwrite a good value (basically, check our other inputs)
-        (if (= ch end-chan)
-          (l/log :warn "Stopping RCP approval estimator")
-          (do (update-est stats-for-days rcp rcp-hist rasmussen yougov the-hill state)
-              (recur)))))
-    (utils/add-guarded-watch-ins
-     (:inputs state)
-     ::run
-     [[approval-rcp/id]
-      [approval-rcp/hist]
-      [approval-rasmussen/id]
-      [approval-yougov-weekly-registered/id]
-      [approval-the-hill/id]]
-     #(and (not= %1 %2) (some? %2))
-     #(async/>!! c %))))
+       {:val est
+        :dists-by-day ests
+        :est-at (java.time.Instant/now)
+        :date rcp-date
+        :diff (- est rcp-val)})))

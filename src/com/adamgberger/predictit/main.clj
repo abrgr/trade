@@ -10,7 +10,7 @@
             [com.adamgberger.predictit.inputs.rasmussen :as rasmussen-input]
             [com.adamgberger.predictit.inputs.yougov-weekly-registered :as yougov-weekly-input]
             [com.adamgberger.predictit.inputs.approval-rating-the-hill:as the-hill-input]
-            [com.adamgberger.predictit.estimators :as estimators]
+            [com.adamgberger.predictit.estimators.approval-rating-rcp :as rcp-estimator]
             [com.adamgberger.predictit.executors.default-executor :as exec])
   (:gen-class))
 
@@ -230,7 +230,6 @@
                        :periodicity {:at-least-every-ms once-per-10-minutes
                                     :jitter-pct 0.2}
                        :param-keypaths [:venue-predictit/venue :venue-predictit/pos :venue-predictit/mkts-by-id]}
-                      }
                      :inputs/rcp-current
                       {:io-producer (fn [_ send-result]
                                         (rcp-input/get-current send-result))
@@ -261,10 +260,30 @@
                        :periodicity {:at-least-every-ms once-per-minute
                                     :jitter-pct 0.2}
                        :param-keypaths []}
-                       }
+                     :estimators/approval-rcp
+                      {:compute-producer (fn [{{:keys [cfg]
+                                                :inputs/keys [rcp-current
+                                                              rcp-hist
+                                                              rasmussen-current
+                                                              yougov-weekly-registered-current
+                                                              the-hill-current]} :partial-state}
+                                              send-result]
+                                          (rcp-estimator/estimate
+                                            (get-in stats-for-days [:com.adamgberger.predictit.estimators.approval-rating-rcp/id])
+                                            rcp-current
+                                            rcp-hist
+                                            rasmussen-current
+                                            yougov-weekly-registered-current
+                                            the-hill-current))
+                       :periodicity {:at-least-every-ms once-per-minute
+                                     :jitter-pct 0.2}
+                       :param-keypaths [:cfg
+                                        :inputs/rcp-current
+                                        :inputs/rcp-hist
+                                        :inputs/rasmussen-current
+                                        :inputs/yougov-weekly-registered-current
+                                        :inputs/the-hill-current]}}
                     :logger l/log)]
-    (estimators/start-all (:estimators cfg) state end-chan)
-    (inputs/start-all state end-chan)
     (state-watchdog state end-chan)
     (async/<!! end-chan)))
 
