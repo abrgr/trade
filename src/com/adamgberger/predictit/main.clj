@@ -11,15 +11,12 @@
             [com.adamgberger.predictit.executors.default-executor :as exec])
   (:gen-class))
 
-(defn get-available-markets-chan [venue]
-  (async/thread (v/available-markets venue)))
-
-(defn pos-needing-orders [venue-state venue-id pos]
+(defn pos-needing-orders [pos prev-orders]
   (->> pos
        (mapcat :contracts)
        (filter
         (fn [{:keys [market-id contract-id] {:keys [buy sell]} :orders}]
-          (let [orders (get-in venue-state [venue-id :orders market-id contract-id :orders])
+          (let [orders (get-in prev-orders [market-id contract-id :orders])
                 buy-orders (filter #(#{:buy-yes :buy-no} (:trade-type %)) orders)
                 sell-orders (filter #(#{:sell-yes :sell-no} (:trade-type %)) orders)
                 qty-sum #(+ %1 (:qty %2))
@@ -33,76 +30,6 @@
                    first)))
        (into #{})
        (into [])))
-
-(defn get-mkt [venue-state venue-id mkt-id]
-  (->> venue-state
-       venue-id
-       :mkts
-       (filter #(= (:market-id %) mkt-id))
-       first))
-
-(defn update-orders [state venue]
-  (let [venue-state @(:venue-state state)
-        venue-id (v/id venue)
-        pos (get-in venue-state [venue-id :pos])
-        pos-to-update (pos-needing-orders venue-state venue-id pos)]
-    (doseq [{:keys [market-id contracts]} pos-to-update
-            {:keys [contract-id]} contracts]
-      (let [{:keys [market-name]} (get-mkt venue-state venue-id market-id)]
-        (if (some? market-name)
-          (let [orders (v/orders venue market-id market-name contract-id)]
-            (send
-             (:venue-state state)
-             #(assoc-in % [venue-id :orders market-id contract-id] {:valid? true :orders orders})))
-          (send
-           (:venue-state state)
-           #(assoc-in % [venue-id :orders market-id contract-id] {:valid? false :orders []})))))))
-
-; TODO: updates to :pos should potentially invalidate their corresponding order entry
-(defn maintain-orders [state end-chan]
-  (doseq [venue (:venues state)
-          :let [venue-id (v/id venue)]]
-    (utils/add-guarded-watch-ins
-     (:venue-state state)
-     ::maintain-orders
-     [[venue-id :pos]
-      [venue-id :mkts]]
-     (fn [[old-pos old-mkts] [new-pos new-mkts]]
-       (or (not= old-pos new-pos)
-           (not= old-mkts new-mkts)))
-     (fn [_] (update-orders state venue)))))
-
-(defn maintain-venue-state [key interval-ms updater state end-chan]
-  ; we kick off a go-routine that updates each venue's state
-  ; at key with the result of (updater venue)
-  ; every interval-ms and only stops when end-chan is closed
-
-  (l/log :info "Starting venue maintenance" {:key key})
-
-  (let [{:keys [venues venue-state]} state
-        upd (fn [venue-state id val]
-              (assoc-in venue-state [id key] val))
-        handler #(doseq [venue venues]
-                   (let [val (updater venue)
-                         id (v/id venue)]
-                     (send-off venue-state upd id val)))]
-    (utils/repeatedly-until-closed
-     handler
-     600000
-     #(l/log :warn "Stopping venue maintenance" {:key key})
-     end-chan)))
-
-(defn maintain-markets [state end-chan]
-  ; we kick off a go-routine that polls all available markets in each venue
-  ; and updates venue-state with the results.
-
-  (letfn [(get-mkts [venue]
-            (let [venue-id (v/id venue)
-                  mkts (v/available-markets venue)]
-              (l/log :info "Found markets for venue" {:venue-id venue-id
-                                                      :market-count (count mkts)})
-              mkts))]
-    (maintain-venue-state :mkts 600000 get-mkts state end-chan)))
 
 (defn start-strategies [cfg state end-chan]
   (reduce
@@ -133,103 +60,13 @@
      #(l/log :warn "Stopping state watchdog")
      end-chan)))
 
-(defn update-order-book [state venue-id market-id contract-id val]
-  (l/log :info "Received order book update" {:venue-id venue-id
-                                             :market-id market-id
-                                             :contract-id contract-id})
-  (send
-   (:venue-state state)
-   #(let [last-price (get-in % [venue-id :contracts market-id contract-id :last-price])]
-      (assoc-in
-       %
-       [venue-id :order-books market-id contract-id]
-       (merge {:last-price last-price} val)))))
-
-(defn all-order-book-reqs [venue-state venue-id]
-  (->> (get-in venue-state [venue-id :req-order-books])
-       vals
-       (apply concat)
-       (into #{})))
-
-(defn continue-monitoring-order-book [state venue-id market-id]
-  (let [venue-state @(:venue-state state)
-        req-books (all-order-book-reqs venue-state venue-id)]
-    (->> req-books
-         (filter #(= market-id (:market-id %)))
-         empty?
-         not)))
-
-(defn monitor-order-book [state end-chan venue-id market-id contract-id order-book-updates]
-  (async/go-loop []
-    (update-order-book state venue-id market-id contract-id (first order-book-updates))
-    (let [interval 30000
-          keep-going? (async/alt!
-                        end-chan false
-                        (async/timeout interval) true)]
-      (if (and (continue-monitoring-order-book state venue-id market-id)
-               keep-going?)
-        (recur)
-        (l/log :warn "Stopping order book monitor" {:market-id market-id
-                                                    :contract-id contract-id})))))
-
-(defn update-contracts [state venue-id market-id market-url]
-  (let [venue (->> state
-                   :venues
-                   (filter #(= venue-id (v/id %)))
-                   first)
-        contracts (v/contracts venue market-id market-url)]
-    (doseq [contract contracts]
-      (let [contract-id (:contract-id contract)]
-        (send
-         (:venue-state state)
-         #(assoc-in % [venue-id :contracts market-id contract-id] contract))))
-    contracts))
-
-(defn monitor-market-contracts [state end-chan venue-id market-id market-url]
-  (async/go-loop []
-    (update-contracts state venue-id market-id market-url)
-    (let [interval 30000
-          keep-going? (async/alt!
-                        end-chan false
-                        (async/timeout interval) true)]
-      (if (and (continue-monitoring-order-book state venue-id market-id)
-               keep-going?)
-        (recur)
-        (l/log :warn "Stopping market contracts monitor" {:market-id market-id})))))
-
-(defn maintain-order-book [state end-chan venue-id venue req]
-  (l/log :info "Starting watch of order book" {:venue-id venue-id
-                                               :req req})
-  (let [{:keys [market-id market-url]} req
-        contracts (update-contracts state venue-id market-id market-url)]
-    (monitor-market-contracts state end-chan venue-id market-id market-url)
-    (doseq [contract contracts]
-      (let [contract-id (:contract-id contract)]
-        (->> (v/monitor-order-book
-              venue
-              market-id
-              market-url
-              contract-id)
-             (monitor-order-book state end-chan venue-id market-id contract-id))))))
-
-(defn maintain-order-books [state end-chan]
-  ; monitor state -> venue-state -> venue-id -> :req-order-books -> strat-id for sets of maps like this:
-  ; {:market-id x :market-name x :contract-id y}
-  (add-watch
-   (:venue-state state)
-   ::maintain-order-books
-   (fn [_ _ old new]
-     (let [venue-ids (set (concat (keys old) (keys new)))]
-       (doseq [venue-id venue-ids]
-         (let [new-reqs (all-order-book-reqs new venue-id)
-               old-reqs (all-order-book-reqs old venue-id)
-               added (clojure.set/difference new-reqs old-reqs)
-               venue (->> state
-                          :venues
-                          (filter #(= venue-id (v/id %)))
-                          first)]
-           (doseq [to-add added]
-             (maintain-order-book state end-chan venue-id venue to-add))))))))
+(defn async-transform-single
+  "Applies 'xform', a function of one argument, to a single value in channel 'c' and
+   invokes cb with the result"
+  [xform cb c]
+  (async/take!
+    c
+    #(-> % xform cb)))
 
 (defn run-trading [cfg end-chan]
   (let [state {:venues (->> (vs/venue-makers)
@@ -260,7 +97,7 @@
                                         :venue-predictit/mkts
                                         :venue-predictit/contracts
                                         :venue-predictit/venue
-                                        :venue-predictit/req-order-books
+                                        :venue-predictit/monitored-market-ids
                                         :venue-predictit/req-pos
                                         :venue-predictit/pos
                                         :venue-predictit/bal
@@ -284,11 +121,114 @@
                        :periodicity {:at-least-every-ms once-per-minute
                                     :jitter-pct 0.2}
                        :param-keypaths [:venue-predictit/venue]}
+                     :venue-predictit/monitored-mkts
+                      {:projection (fn [{{:strategy-rcp/keys [monitored-mkts]} :partial-state}]
+                                     monitored-mkts)
+                       :param-keypaths [:strategy-rcp/monitored-mkts]}
+                     :venue-predictit/mkts-by-id
+                      {:projection (fn [{{:strategy-rcp/keys [mkts]} :partial-state}]
+                                     (group-by mkts :market-id))
+                       :param-keypaths [:strategy-rcp/mkts]}
+                     :venue-predictit/contracts
+                      {:io-producer (fn [{{:venue-predictit/keys [venue monitored-mkts]} :partial-state} send-result]
+                                      (->> monitored-mkts
+                                           (map
+                                            (fn [{:keys [market-id market-url]}]
+                                              (let [c (async/chan)]
+                                                (v/contracts
+                                                  venue market-id
+                                                  market-url
+                                                  #(do (async/put! c (assoc % :mkt-id market-id))
+                                                       (async/close! c))
+                                                c))))
+                                           async/merge
+                                           (async/into [])
+                                           (async-transform-single
+                                             #(reduce
+                                                (fn [by-mkt-id {:keys [mkt-id contract-id] :as contract}]
+                                                  (assoc-in
+                                                    by-mkt-id
+                                                    [mkt-id contract-id]
+                                                    contract))
+                                                {}
+                                                %))))
+                       :param-keypaths [:venue-predictit/venue venue-predictit/monitored-mkts]}
+                     :venue-predictit/order-books
+                      {:io-producer (fn [{{:venue-predictit/keys [venue contracts mkts-by-id]} :partial-state} send-result]
+                                      (->> contracts
+                                           (mapcat second)
+                                           (map second)
+                                           (map
+                                            (fn [{:keys [mkt-id contract-id]}]
+                                              (let [c (async/chan)
+                                                    {:keys [market-url]} (get mkts-by-id mkt-id)]
+                                                (v/order-book
+                                                  venue
+                                                  mkt-id
+                                                  market-url
+                                                  contract-id
+                                                  #(do (async/put! c {:mkt-id mkt-id
+                                                                      :contract-id contract-id
+                                                                      :order-book %})
+                                                       (async/close! c))))))
+                                           async/merge
+                                           (async/into [])
+                                           (async-transform-single
+                                             #(reduce
+                                                (fn [by-mkt-by-contract {:keys [mkt-id contract-id order-book]}]
+                                                  (assoc-in
+                                                    by-mkt-by-contract
+                                                    [mkt-id contract-id]
+                                                    order-book))
+                                                {}
+                                                %))))
+                       :periodicity {:at-least-every-ms once-per-minute
+                                    :jitter-pct 0.2}
+                       :param-keypaths [:venue-predictit/venue :venue-predictit/contracts :venue-predictit/mkts-by-id]}
+                     :venue-predictit/orders
+                      {:io-producer (fn [{:keys [prev]
+                                          {:venue-predictit/keys [venue pos mkts-by-id]} :partial-state}
+                                         send-result]
+                                        (->> (pos-needing-orders pos prev)
+                                             (mapcat
+                                              (fn [{:keys [market-id contracts]}]
+                                                (map
+                                                  (fn [{:keys [contract-id]}]
+                                                    {:contract-id contract-id
+                                                     :market-id market-id
+                                                     :market-url (get-in mkts-by-id [market-id :market-url])}))))
+                                             (map
+                                              (fn [{:keys [contract-id market-id market-url]}]
+                                                (let [c (async/chan)]
+                                                  (v/orders
+                                                    venue
+                                                    market-id
+                                                    market-url
+                                                    contract-id
+                                                    #(do (async/put! c {:mkt-id market-id
+                                                                        :contract-id contract-id
+                                                                        :orders %})
+                                                         (async/close! c))))))
+                                             async/merge
+                                             (async/into [])
+                                             (async-transform-single
+                                              (fn [orders]
+                                                (reduce
+                                                  (fn [orders-by-mkt-by-contract {:keys [mkt-id contract-id orders]}]
+                                                    (assoc-in
+                                                      orders-by-mkt-by-contract
+                                                      [mkt-id contract-id]
+                                                      {:valid? true
+                                                      :orders orders}))
+                                                  {}
+                                                  orders))
+                                              send-result)))
+                       :periodicity {:at-least-every-ms once-per-10-minutes
+                                    :jitter-pct 0.2}
+                       :param-keypaths [:venue-predictit/venue :venue-predictit/pos :venue-predictit/mkts-by-id]}
                       }
 
                     :logger l/log)]
-    (maintain-order-books state end-chan)
-    (maintain-orders state end-chan)
     (estimators/start-all (:estimators cfg) state end-chan)
     (inputs/start-all state end-chan)
     (state-watchdog state end-chan)
