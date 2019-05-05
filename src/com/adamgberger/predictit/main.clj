@@ -72,18 +72,7 @@
     #(-> % xform cb)))
 
 (defn run-trading [cfg end-chan]
-  (let [state {:venues (->> (vs/venue-makers)
-                            (map #(% (:creds cfg)))
-                            (into []))
-               :cfg (->> cfg
-                         (filter #(not= (first %) :creds))
-                         (into {}))
-               :venue-state (l/logging-agent "venue-state" (agent {}))
-               :strats {}
-               :inputs (l/logging-agent "inputs" (agent {}))
-               :estimates (l/logging-agent "estimates" (agent {}))}
-        state (assoc-in state [:strats] (start-strategies (:strats cfg) state end-chan))
-        once-per-10-seconds 10000
+  (let [once-per-10-seconds 10000
         twice-per-minute 30000
         once-per-minute (* 2 twice-per-minute)
         once-per-10-minutes (* once-per-minute 10)
@@ -92,7 +81,10 @@
                       (v/make-venue
                         cfg
                         #(send-result
-                          (merge {:cfg cfg} {:venue-predictit/venue %}))))
+                          (merge {:cfg (->> cfg
+                                            (filter #(not= (first %) :creds))
+                                            (into {}))}
+                                 {:venue-predictit/venue %}))))
                     {:venue-predictit/executions
                       {:compute-producer execute-trades
                        :periodicity {:at-least-every-ms twice-per-minute
