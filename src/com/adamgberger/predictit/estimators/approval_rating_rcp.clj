@@ -83,7 +83,7 @@
      {:mean (* mean-1 0.75)
       :std (* std-1 0.75)})))
 
-(defn- estimate [stats-for-days rcp rcp-hist rasmussen yougov thehill]
+(defn estimate [stats-for-days rcp rcp-hist rasmussen yougov thehill]
   (when (and (some? rcp) (some? rcp-hist))
     (let [{c :constituents
            valid? :valid?

@@ -118,13 +118,13 @@
                                     :jitter-pct 0.2}
                        :param-keypaths [:venue-predictit/venue]}
                      :venue-predictit/monitored-mkts
-                      {:projection (fn [{{:strategy-rcp/keys [monitored-mkts]} :partial-state}]
-                                     monitored-mkts)
-                       :param-keypaths [:strategy-rcp/monitored-mkts]}
-                     :venue-predictit/mkts-by-id
                       {:projection (fn [{{:strategy-rcp/keys [mkts]} :partial-state}]
-                                     (group-by mkts :market-id))
+                                     mkts)
                        :param-keypaths [:strategy-rcp/mkts]}
+                     :venue-predictit/mkts-by-id
+                      {:projection (fn [{{:venue-predictit/keys [monitored-mkts]} :partial-state}]
+                                     (group-by monitored-mkts :market-id))
+                       :param-keypaths [:venue-predictit/monitored-mkts]}
                      :venue-predictit/contracts
                       {:io-producer (fn [{{:venue-predictit/keys [venue monitored-mkts]} :partial-state} send-result]
                                       (->> monitored-mkts
@@ -253,7 +253,8 @@
                                     :jitter-pct 0.2}
                        :param-keypaths []}
                      :estimators/approval-rcp
-                      {:compute-producer (fn [{{:keys [cfg]
+                      {:compute-producer (fn [{:keys [prev]
+                                               {:keys [cfg]
                                                 :inputs/keys [rcp-current
                                                               rcp-hist
                                                               rasmussen-current
@@ -274,8 +275,52 @@
                                         :inputs/rcp-hist
                                         :inputs/rasmussen-current
                                         :inputs/yougov-weekly-registered-current
-                                        :inputs/the-hill-current]}}
-                    :logger l/log)]
+                                        :inputs/the-hill-current]}
+                     :strategy-rcp/mkts
+                      {:projection (fn [{{:venue-predictit/keys [mkts]} :partial-state}]
+                                    (->> mkts
+                                         (filterv strategy-rcp/is-relevant-mkt)))
+                       :param-keypaths [:venue-predictit/mkts]}
+                     :strategy-rcp/tradable-mkts
+                      {:projection (fn [{{mkts :strategy-rcp/mkts
+                                          contracts :venue-predictit/contracts} :partial-state}]
+                                    (mapv
+                                      (partial strategy-rcp/adapt-mkt contracts)
+                                      mkts))
+                       :param-keypaths [:strategy-rcp/mkts :venue-predictit/contracts]}
+                     :strategy-rcp/prob-dist ; TODO: validate both some?
+                      {:projection (fn [{{est :estimators/approval-rcp
+                                          tradable-mkts :strategy-rcp/tradable-mkts} :partial-state}]
+                                    (strategy-rcp/calculate-prob-dists est tradable-mkts))
+                       :param-keypaths [:estimators/approval-rcp :strategy-rcp/tradable-mkts]}
+                     :strategy-rcp/latest-major-input-change
+                      {:compute-producer (fn [{{est :estimators/approval-rcp} :partial-state}]
+                                          (strategy-rcp/calculate-major-input-change est))
+                       :param-keypaths [:estimators/approval-rcp]}
+                     :strategy-rcp/trades
+                      {:compute-producer (fn [{{:keys [cfg]
+                                                :strategy-rcp/keys [tradable-mkts
+                                                                    prob-dist
+                                                                    latest-major-input-change]
+                                                :venue-predictit/keys [order-books
+                                                                       orders]
+                                                :estimators/keys [approval-rcp]} :partial-state}]
+                                          (strategy-rcp/calculate-trades
+                                            (-> cfg :com.adamgberger.strategies.approval-rating-rcp/id :hurdle-rate)
+                                            tradable-mkts
+                                            prob-dist
+                                            latest-major-input-change
+                                            approval-rcp
+                                            order-books
+                                            orders))
+                       :param-keypaths [:cfg
+                                        :strategy-rcp/tradable-mkts
+                                        :strategy-rcp/prob-dist
+                                        :strategy-rcp/latest-major-input-change
+                                        :venue-predictit/order-books
+                                        :venue-predictit/orders
+                                        :estimators/approval-rcp]}
+                    :logger l/log})]
     (state-watchdog state end-chan)
     (async/<!! end-chan)))
 

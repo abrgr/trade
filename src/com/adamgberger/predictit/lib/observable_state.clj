@@ -21,7 +21,8 @@
         effective-result (if valid?
                            result
                            (with-merge-meta prev {::invalid-value result}))
-        new-val (with-merge-meta effective-result {::updated-at (java.time.Instant/now)})]
+        new-val (with-merge-meta effective-result {::updated-at (java.time.Instant/now)
+                                                   ::prev (with-meta prev nil)})]
     (send-update update-path keypath (assoc new-state keypath new-val))))
 
 (defn- handle-updates [send-update

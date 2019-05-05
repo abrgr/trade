@@ -23,44 +23,6 @@
         is-approval (.contains n " approval ")]
     (and is-open is-trump is-rcp is-approval)))
 
-(defn maintain-relevant-mkts [state strat-state end-chan]
-  (l/log :info "Starting relevant market maintenance for RCP")
-  (let [rel-chan (async/chan)]
-    ; kick off a go routine to filter markets down to relevant markets
-    ; and update the strategy with the results
-    (async/go-loop []
-      (let [[mkts _] (async/alts! [rel-chan end-chan])]
-        (when (some? mkts)
-          (let [rel-mkts (->> mkts
-                              (filter is-relevant-mkt)
-                              (into []))]
-            (l/log :info "Updating relevant markets for RCP" {:rel-count (count rel-mkts)
-                                                              :total-count (count mkts)})
-            (send strat-state #(merge % {:mkts rel-mkts}))
-            (recur)))))
-    ; watch for changes to predictit markets and send new values to our go routine
-    (utils/add-guarded-watch-in
-     (:venue-state state)
-     ::rel-mkts
-     [venue-id :mkts]
-     #(and (not= %1 %2) (some? %2))
-     #(async/>!! rel-chan %))))
-
-(defn maintain-order-books [state strat-state end-chan]
-  (utils/add-guarded-watch-in
-   strat-state
-   ::maintain-order-books
-   [:mkts]
-   not=
-   (fn [mkts]
-     (let [needed-order-books (->> mkts
-                                   (map #(select-keys % [:market-id :market-url :market-name]))
-                                   (into #{}))
-           updater #(assoc-in % [venue-id :req-order-books ::id] needed-order-books)
-           venue-state (:venue-state state)]
-       (l/log :info "Requesting order books" {:needed-order-books needed-order-books})
-       (send venue-state updater)))))
-
 (defn adapt-contract-bounds [c-name]
     ; Match "45.3% or lower", "50.2% or higher", or "47.1% - 47.4%"
     ; Return a bound {:lower-inclusive x :upper-inclusive y} or nil
@@ -120,27 +82,11 @@
        :end-date end-date
        :contracts contracts})))
 
-(defn maintain-local-markets [state strat-state end-chan]
-  (utils/add-guarded-watch-in
-   (:venue-state state)
-   ::maintain-local-markets
-   [venue-id :contracts]
-   not=
-   (fn [contracts-by-mkt-and-ctrct]
-     (let [mkts (:mkts @strat-state) ; TODO: are we guaranteed that @strat-state is at least as fresh as venue-state?
-           adapt-mkt (fn [mkt]
-                       (let [id (:market-id mkt)
-                             adapted-contracts (->> (get contracts-by-mkt-and-ctrct id)
-                                                    vals
-                                                    (map adapt-contract)
-                                                    (into []))]
-                         (adapt-market mkt adapted-contracts)))
-           adapted-mkts (->> mkts
-                             (map adapt-mkt)
-                             (filter some?)
-                             (into []))
-           updater #(assoc % :tradable-mkts adapted-mkts)]
-       (send strat-state updater)))))
+(defn adapt-mkt [contracts {:keys [market-id] :as mkt}]
+   (->> (get contracts market-id)
+        vals
+        (mapv adapt-contract)
+        (adapt-market mkt)))
 
 (defn contract-prob-dist [^org.apache.commons.math3.distribution.AbstractRealDistribution dist contracts]
   (->> contracts
@@ -168,15 +114,12 @@
        (filter some?)
        (into {})))
 
-(defn update-probs [state strat-state end-chan]
+(defn calculate-prob-dists [rcp-estimate tradable-mkts]
   (l/log :info "Updating RCP probabilities")
-  (let [{:keys [dists-by-day]} (-> @(:estimates state) rcp-estimate-id)
-        tradable-mkts (:tradable-mkts @strat-state)
-        prob-dist (when (and (some? tradable-mkts)
-                             (some? dists-by-day))
-                    (mkt-prob-dists dists-by-day tradable-mkts))]
-    (when (some? prob-dist)
-      (send strat-state #(assoc % :prob-dist prob-dist)))))
+  (let [{:keys [dists-by-day]} rcp-estimate]
+    (when (and (some? tradable-mkts)
+               (some? dists-by-day))
+      (mkt-prob-dists dists-by-day tradable-mkts))))
 
 (defn market-time-info [^java.time.ZonedDateTime end-date ^java.time.Instant latest-major-input-change]
   (let [mins-left (.between
@@ -234,122 +177,41 @@
       (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob)
       [])))
 
-(defn update-trades [state strat-state end-chan hurdle-rate]
+(defn calculate-trades [hurdle-rate
+                        tradable-mkts
+                        prob-dist
+                        latest-major-input-change
+                        rcp-est
+                        order-books
+                        orders]
   (l/with-log :info "Updating trades"
-    (let [{mkts :tradable-mkts :keys [prob-dist latest-major-input-change]} @strat-state
-          cur (get-in @(:estimates state) [rcp-estimate-id :val])
-          venue-state @(:venue-state state)
-          order-books (get-in venue-state [venue-id :order-books])
-          orders-by-contract-id-by-mkt-id (get-in venue-state [venue-id :orders])
+    (let [cur (:val rcp-est)
           get-mkt (fn [mkt-id]
-                    (->> mkts
+                    (->> tradable-mkts
                          (filter #(= (:market-id %) mkt-id))
                          first))
           get-trades-for-market (fn [[mkt-id p-by-ctrct]]
                                   {mkt-id (trades-for-mkt
                                            hurdle-rate
                                            (get-mkt mkt-id)
-                                           (get orders-by-contract-id-by-mkt-id mkt-id)
+                                           (get orders mkt-id)
                                            latest-major-input-change
                                            cur
                                            (get order-books mkt-id)
-                                           p-by-ctrct)})
-          trades (->> prob-dist
-                      (map get-trades-for-market)
-                      (apply merge {}))]
-      (send (:venue-state state) #(assoc-in % [venue-id :req-pos ::id] trades)))))
-
-(defn maintain-trades [state strat-state end-chan hurdle-rate]
-    ; TODO: also tick update-trades more frequently as we near the end of the market
-  (letfn [(upd [_]
-            (update-trades state strat-state end-chan hurdle-rate))
-          (valid? [old new]
-            (and (some? new)
-                 (not= old new)))]
-    (utils/add-guarded-watch-in
-     (:venue-state state)
-     ::maintain-trades-order-books
-     [venue-id :order-books]
-     not=
-     upd)
-    (utils/add-guarded-watch-in
-     (:venue-state state)
-     ::maintain-trades-bal
-     [venue-id :bal]
-     not=
-     upd)
-    (utils/add-guarded-watch-in
-     (:venue-state state)
-     ::maintain-trades-pos
-     [venue-id :pos]
-     not=
-     upd)
-    (utils/add-guarded-watch-in
-     strat-state
-     ::maintain-trades-prob
-     [:prob-dist]
-     valid?
-     upd)
-    (utils/add-guarded-watch-in
-     strat-state
-     ::maintain-trades-major-changes
-     [:latest-major-input-change]
-     valid?
-     upd)))
-
-(defn maintain-probs [state strat-state end-chan]
-    ; TODO: make a decent macro for this
-  (letfn [(upd [_]
-            (update-probs state strat-state end-chan))
-          (valid? [old new]
-            (and (some? new)
-                 (not= old new)))]
-    (utils/add-guarded-watch-in
-     (:estimates state)
-     ::maintain-probs
-     [rcp-estimate-id :val]
-     valid?
-     upd)
-    (utils/add-guarded-watch-in
-     (:venue-state state)
-     ::maintain-probs
-     [venue-id :contracts]
-     valid?
-     upd)
-    (utils/add-guarded-watch-in
-     strat-state
-     ::maintain-probs-for-mkts
-     [:tradable-mkts]
-     valid?
-     upd)))
+                                           p-by-ctrct)})]
+      (->> prob-dist
+           (map get-trades-for-market)
+           (apply merge {})))))
 
 (defn- round-rcp [a]
   (.setScale a 1 java.math.RoundingMode/HALF_UP))
 
-(defn maintain-major-input-changes [state strat-state end-chan]
-    ; TODO: make a decent macro for this
-  (letfn [(upd [_]
-            (send strat-state #(assoc % :latest-major-input-change (java.time.Instant/now))))
-          (valid? [^java.math.BigDecimal old ^java.math.BigDecimal new]
-            (and (some? new)
-                 (and (some? old)
-                      (not= (round-rcp old) (round-rcp new)))))]
-    (utils/add-guarded-watch-in
-     (:estimates state)
-     ::maintain-major-input-changes
-     [rcp-estimate-id :val]
-     valid?
-     upd)))
-
-(defn run [cfg state end-chan]
-  (let [{:keys [hurdle-rate]} (::id cfg)
-        strat-state (l/logging-agent "rcp-strat" (agent {}))]
-    (when (nil? hurdle-rate)
-      (throw (ex-info "Bad config for rcp strategy" {:cfg (::id cfg)})))
-    (maintain-relevant-mkts state strat-state end-chan)
-    (maintain-order-books state strat-state end-chan)
-    (maintain-local-markets state strat-state end-chan)
-    (maintain-probs state strat-state end-chan)
-    (maintain-trades state strat-state end-chan hurdle-rate)
-    (maintain-major-input-changes state strat-state end-chan)
-    {::state strat-state}))
+(defn calculate-major-input-change [est]
+  (let [{:keys [est-at val]} est
+        {prev-est-at :est-at
+         prev-val :val} (-> est meta :com.adamgberger.predictit.lib.observable-state/prev)]
+    (if (and (some? est-at)
+             (some? prev-est-at)
+             (not= (round-rcp val) (round-rcp prev-val)))
+      (java.time.Instant/now)
+      nil)))
