@@ -56,13 +56,32 @@
      #(l/log :warn "Stopping state watchdog")
      end-chan)))
 
-(defn async-transform-single
+(defn- async-transform-single
   "Applies 'xform', a function of one argument, to a single value in channel 'c' and
    invokes cb with the result"
   [xform cb c]
   (async/take!
     c
     #(-> % xform cb)))
+
+(defn orig-investment [positions]
+  (->> positions
+       (mapcat :contracts)
+       (map #(* (:qty %) (:avg-price-paid %)))
+       (reduce + 0.0)))
+
+(defn- strat-bankroll [bal pos allocation mkt-ids]
+  (let [relevant-pos (filter #(mkt-ids (:market-id %)) pos)
+        strat-pos-investment (orig-investment relevant-pos)
+        all-pos-investment (orig-investment pos)]
+    (if (and (some? bal)
+             (some? pos)
+             (some? allocation))
+      (let [total-val (+ all-pos-investment bal)
+            desired (* total-val allocation)]
+        {:desired desired
+         :current strat-pos-investment
+         :cash (max 0.0 (- desired strat-pos-investment))}))))
 
 (defn run-trading [cfg end-chan]
   (let [once-per-10-seconds 10000
@@ -116,7 +135,9 @@
                        :param-keypaths [:strategy-rcp/mkts]}
                      :venue-predictit/mkts-by-id
                       {:projection (fn [{{:venue-predictit/keys [monitored-mkts]} :partial-state}]
-                                     (group-by monitored-mkts :market-id))
+                                     (->> (group-by monitored-mkts :market-id)
+                                          (map #(vector (first %) (-> % second first)))
+                                          (into #{})))
                        :param-keypaths [:venue-predictit/monitored-mkts]}
                      :venue-predictit/contracts
                       {:io-producer (fn [{{:venue-predictit/keys [venue monitored-mkts]} :partial-state} send-result]
@@ -215,6 +236,10 @@
                        :periodicity {:at-least-every-ms once-per-10-minutes
                                     :jitter-pct 0.2}
                        :param-keypaths [:venue-predictit/venue :venue-predictit/pos :venue-predictit/mkts-by-id]}
+                     :venue-predictit/req-pos
+                      {:projection (fn [{{:strategy-rcp/keys [trades]} :partial-state}]
+                                     trades)
+                       :param-keypaths [:strategy-rcp/trades]}
                      :inputs/rcp-current
                       {:io-producer (fn [_ send-result]
                                         (rcp-input/get-current send-result))
@@ -290,7 +315,7 @@
                       {:compute-producer (fn [{{est :estimators/approval-rcp} :partial-state}]
                                           (strategy-rcp/calculate-major-input-change est))
                        :param-keypaths [:estimators/approval-rcp]}
-                     :strategy-rcp/trades
+                     :strategy-rcp/req-pos
                       {:compute-producer (fn [{{:keys [cfg]
                                                 :strategy-rcp/keys [tradable-mkts
                                                                     prob-dist
@@ -315,6 +340,43 @@
                                         :estimators/approval-rcp]
                        :periodicity {:at-least-every-ms once-per-10-seconds
                                     :jitter-pct 0.2}}
+                     :strategy-rcp/mkt-ids
+                      {:projection (fn [{{:strategy-rcp/keys [mkts]} :partial-state}]
+                                      (->> mkts (map :market-id) (into #{})))}
+                     :strategy-rcp/bankroll
+                      {:compute-producer (fn [{{:keys [cfg]
+                                                :venue-predictit/keys [bal pos]
+                                                :strategy-rcp/keys [mkt-ids]} :partial-state}]
+                                          (let [strat-id :com.adamgberger.predictit.strategies.approval-rating-rcp/id
+                                                allocation (get-in cfg [:allocations strat-id])]
+                                            (strat-bankroll bal pos allocation mkt-ids)))
+                       :param-keypaths [:cfg
+                                        :venue-predictit/bal
+                                        :venue-predictit/pos
+                                        :strategy-rcp/mkt-ids]}
+                     :strategy-rcp/desired-trades
+                      {:compute-producer (fn [{{:venue-predictit/keys [mkts-by-id contracts pos bal orders order-books]
+                                                :strategy-rcp/keys [bankroll req-pos]} :partial-state}]
+                                          (exec/generate-desired-trades bankroll mkts-by-id contracts req-pos pos bal orders order-books))
+                       :param-keypaths [:strategy-rcp/bankroll
+                                        :venue-predictit/mkts-by-id
+                                        :venue-predictit/contracts
+                                        :strategy-rcp/req-pos
+                                        :venue-predictit/pos
+                                        :venue-predictit/bal
+                                        :venue-predictit/orders
+                                        :venue-predictit/order-books]}
+                     :executor/desired-trades
+                      {:projection (fn [{{:strategy-rcp/keys [desired-trades]} :partial-state}]
+                                    desired-trades)
+                       :param-keypaths [:strategy-rcp/desired-trades]}
+                     :executor/immediately-executable-trades
+                      {:compute-producer (fn [{{:strategy-rcp/keys [desired-trades]
+                                                :venue-predictit/keys [bal orders]} :partial-state}]
+                                          (exec/generate-immediately-executable-trades desired-trades orders bal))
+                       :param-keypaths [:executor/desired-trades
+                                        :venue-predictit/bal
+                                        :venue-predictit/orders]}
                     }
                     :logger l/log)]
     (state-watchdog state end-chan)

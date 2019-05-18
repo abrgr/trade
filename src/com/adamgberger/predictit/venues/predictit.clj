@@ -165,6 +165,7 @@
     #(send-result
       (let [order (get-in % [:order :offer])]
         {:order-id (:offerId order)
+         :mkt-id market-id
          :contract-id (:contractId order)
          :price (:pricePerShare order)
          :qty (:remainingQuantity order)
