@@ -220,19 +220,38 @@
              (filter some?)
              (into [])))))))
 
-(defmulti submit-for-execution (fn [venue {:keys [mkt-id trade-type]}]
+(defmulti submit-for-execution (fn [venue {:keys [mkt-id trade-type]} send-result]
                                  (if (= :cancel trade-type)
                                    :cancel
                                    :trade)))
 (defmethod submit-for-execution :cancel
-  [venue {:keys [mkt-id contract-id order-id price qty]}]
+  [venue {:keys [mkt-id contract-id order-id price qty]} send-result]
   (l/log :info "Cancelling order" {:mkt-id mkt-id :order-id order-id :contract-id contract-id})
-  (v/cancel-order venue mkt-id order-id)
-  {:cancelled {:mkt-id mkt-id :contract-id contract-id :order-id order-id :trade-type :cancel :qty qty :price price}})
+  (v/cancel-order
+    venue
+    mkt-id
+    order-id
+    (utils/cb-wrap-error
+      send-result
+      #(send-result {:cancelled {:mkt-id mkt-id
+                                 :contract-id contract-id
+                                 :order-id order-id
+                                 :trade-type :cancel
+                                 :qty qty
+                                 :price price}}))))
 (defmethod submit-for-execution :trade
-  [venue {:keys [mkt-id contract-id trade-type qty price]}]
+  [venue {:keys [mkt-id contract-id trade-type qty price]} send-result]
   (l/log :info "Submitting order" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
-  {:submitted (v/submit-order venue mkt-id contract-id trade-type qty price)})
+  (v/submit-order
+    venue
+    mkt-id
+    contract-id
+    trade-type
+    qty
+    price
+    (utils/cb-wrap-error
+      send-result
+      #(send-result {:submitted %}))))
 
 (defmulti trade-policy (fn [bp mkt contracts-by-id pos-by-contract-id orders-by-contract-id {:keys [trade-type]}]
                          (case trade-type
@@ -350,9 +369,16 @@
                    :bp (- bal total-order-dollars)})
                  :trades))))))
 
-(defn execute-orders [orders orders-to-submit venue]
-  (let [submitted-orders (map (partial submit-for-execution venue) orders-to-submit)
-        to-remove (->> submitted-orders
+(defn execute-orders [venue orders-to-submit send-result]
+  (->> (async/to-chan orders-to-submit)
+       (utils/async-map
+         (fn [order out-ch]
+           (submit-for-execution venue order (partial async-put-once out-ch))))
+       (async/into [])
+       (#(async/take! % send-result))))
+
+(defn update-orders [orders submitted-orders]
+  (let [to-remove (->> submitted-orders
                        (map :cancelled)
                        (filter some?)
                        (group-by :contract-id)

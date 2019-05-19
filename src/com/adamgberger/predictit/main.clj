@@ -377,7 +377,13 @@
                        :param-keypaths [:executor/desired-trades
                                         :venue-predictit/bal
                                         :venue-predictit/orders]}
-                    }
+                     :executor/executions
+                      {:io-producer (fn [{{:executor/keys [immediately-executable-trades]
+                                           :venue-predictit/keys [venue]} :partial-state}
+                                         send-result]
+                                      (exec/execute-orders venue immediately-executable-trades send-result))
+                      :param-keypaths [:executor/immediately-executable-trades
+                                       :venue-predictit/venue]}}
                     :logger l/log)]
     (state-watchdog state end-chan)
     (async/<!! end-chan)))

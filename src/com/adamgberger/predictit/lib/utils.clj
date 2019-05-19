@@ -233,3 +233,23 @@
       (update m k xform))
     m
     xforms))
+
+(defn cb-wrap-error [next-f f]
+  (fn [v]
+    (if (instance? Exception v)
+      (next-f v)
+      (f v))))
+
+(defn async-put-once [ch val]
+  (async/put! ch val (fn [_] (async/close! ch))))
+
+(defn async-wrap-error [f]
+  (fn [val out-ch]
+    (if (instance? Exception val)
+      (async-put-once out-ch val)
+      (f val out-ch))))
+
+(defn async-map [f in-ch]
+  (let [c (async/chan)]
+    (async/pipeline-async 1 c f in-ch)
+    c))
