@@ -97,21 +97,7 @@
                                             (filter #(not= (first %) :creds))
                                             (into {}))}
                                  {:venue-predictit/venue %}))))
-                    {:venue-predictit/executions
-                      {:compute-producer execute-trades
-                       :periodicity {:at-least-every-ms twice-per-minute
-                                     :jitter-pct 0.2}
-                       :param-keypaths [:cfg
-                                        :venue-predictit/mkts
-                                        :venue-predictit/contracts
-                                        :venue-predictit/venue
-                                        :venue-predictit/monitored-market-ids
-                                        :venue-predictit/req-pos
-                                        :venue-predictit/pos
-                                        :venue-predictit/bal
-                                        :venue-predictit/orders
-                                        :venue-predictit/order-books]}
-                     :venue-predictit/mkts
+                    {:venue-predictit/mkts
                       {:io-producer (fn [{{:venue-predictit/keys [venue]} :partial-state} send-result]
                                       (v/available-markets venue send-result))
                        :periodicity {:at-least-every-ms once-per-10-minutes
@@ -320,8 +306,8 @@
                                                 :strategy-rcp/keys [tradable-mkts
                                                                     prob-dist
                                                                     latest-major-input-change]
-                                                :venue-predictit/keys [order-books
-                                                                       orders]
+                                                :venue-predictit/keys [order-books]
+                                                :executor/keys [outstanding-orders]
                                                 :estimators/keys [approval-rcp]} :partial-state}]
                                           (strategy-rcp/calculate-trades
                                             (-> cfg :com.adamgberger.strategies.approval-rating-rcp/id :hurdle-rate)
@@ -330,13 +316,13 @@
                                             latest-major-input-change
                                             approval-rcp
                                             order-books
-                                            orders))
+                                            outstanding-orders))
                        :param-keypaths [:cfg
                                         :strategy-rcp/tradable-mkts
                                         :strategy-rcp/prob-dist
                                         :strategy-rcp/latest-major-input-change
                                         :venue-predictit/order-books
-                                        :venue-predictit/orders
+                                        :executor/outstanding-orders
                                         :estimators/approval-rcp]
                        :periodicity {:at-least-every-ms once-per-10-seconds
                                     :jitter-pct 0.2}}
@@ -355,28 +341,39 @@
                                         :venue-predictit/pos
                                         :strategy-rcp/mkt-ids]}
                      :strategy-rcp/desired-trades
-                      {:compute-producer (fn [{{:venue-predictit/keys [mkts-by-id contracts pos bal orders order-books]
+                      {:compute-producer (fn [{{:venue-predictit/keys [mkts-by-id contracts pos bal order-books]
+                                                :executor/keys [outstanding-orders]
                                                 :strategy-rcp/keys [bankroll req-pos]} :partial-state}]
-                                          (exec/generate-desired-trades bankroll mkts-by-id contracts req-pos pos bal orders order-books))
+                                          (exec/generate-desired-trades bankroll mkts-by-id contracts req-pos pos bal outstanding-orders order-books))
                        :param-keypaths [:strategy-rcp/bankroll
                                         :venue-predictit/mkts-by-id
                                         :venue-predictit/contracts
                                         :strategy-rcp/req-pos
                                         :venue-predictit/pos
                                         :venue-predictit/bal
-                                        :venue-predictit/orders
+                                        :executor/outstanding-orders
                                         :venue-predictit/order-books]}
+                     :executor/outstanding-orders
+                      {:compute-producer (fn [{{:venue-predictit/keys [orders]
+                                                :executor/keys [executions]} :partial-state
+                                               :keys [prev]}]
+                                            (exec/update-orders prev orders executions))
+                       :param-keypaths [:venue-predictit/orders]
+                       :transient-param-keypaths [:executor/executions]}
                      :executor/desired-trades
                       {:projection (fn [{{:strategy-rcp/keys [desired-trades]} :partial-state}]
                                     desired-trades)
                        :param-keypaths [:strategy-rcp/desired-trades]}
                      :executor/immediately-executable-trades
                       {:compute-producer (fn [{{:strategy-rcp/keys [desired-trades]
-                                                :venue-predictit/keys [bal orders]} :partial-state}]
-                                          (exec/generate-immediately-executable-trades desired-trades orders bal))
+                                                :executor/keys [outstanding-orders]
+                                                :venue-predictit/keys [bal]} :partial-state}]
+                                          (exec/generate-immediately-executable-trades desired-trades outstanding-orders bal))
                        :param-keypaths [:executor/desired-trades
                                         :venue-predictit/bal
-                                        :venue-predictit/orders]}
+                                        :executor/outstanding-orders]
+                       :periodicity {:at-least-every-ms twice-per-minute
+                                     :jitter-pct 0.2}}
                      :executor/executions
                       {:io-producer (fn [{{:executor/keys [immediately-executable-trades]
                                            :venue-predictit/keys [venue]} :partial-state}

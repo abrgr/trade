@@ -377,8 +377,9 @@
        (async/into [])
        (#(async/take! % send-result))))
 
-(defn update-orders [orders submitted-orders]
-  (let [to-remove (->> submitted-orders
+(defn update-orders [prev-orders orders submitted-orders]
+  (let [orders-changed (-> orders meta :prev (not= orders))
+        to-remove (->> submitted-orders
                        (map :cancelled)
                        (filter some?)
                        (group-by :contract-id)
@@ -388,27 +389,29 @@
                     (map :submitted)
                     (filter some?)
                     (group-by :contract-id))]
-    (reduce
-      (fn [orders mkt-id]
-        (update
-         orders
-         mkt-id
-         (fn [orders-by-contract-id]
-           (->> (keys orders-by-contract-id)
-                (concat (keys to-add))
-                (into #{})
-                (map
-                 (fn [contract-id]
-                   (let [existing (get-in orders-by-contract-id [contract-id :orders])
-                         add (get to-add contract-id)
-                         rm (or (get to-remove contract-id) #{})]
-                     [contract-id
-                      {:valid? true
-                       :orders (->> add
-                                    (concat (filter #(->> % :order-id rm not) existing))
-                                    (into []))}])))
-                (into {})))))
+    (if orders-changed
       orders
-      (->> submitted-orders
-           (mapcat vals)
-           (map :mkt-id)))))
+      (reduce
+        (fn [orders mkt-id]
+          (update
+           orders
+           mkt-id
+           (fn [orders-by-contract-id]
+             (->> (keys orders-by-contract-id)
+                  (concat (keys to-add))
+                  (into #{})
+                  (map
+                   (fn [contract-id]
+                     (let [existing (get-in orders-by-contract-id [contract-id :orders])
+                           add (get to-add contract-id)
+                           rm (or (get to-remove contract-id) #{})]
+                       [contract-id
+                        {:valid? true
+                         :orders (->> add
+                                      (concat (filter #(->> % :order-id rm not) existing))
+                                      (into []))}])))
+                  (into {})))))
+        prev-orders
+        (->> submitted-orders
+             (mapcat vals)
+             (map :mkt-id))))))

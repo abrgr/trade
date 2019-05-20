@@ -27,11 +27,15 @@
 
 (defn- handle-updates [send-update
                        keypath
-                       {:keys [param-keypaths io-producer compute-producer projection] :as cfg}
+                       {:keys [param-keypaths
+                               transient-param-keypaths
+                               io-producer
+                               compute-producer
+                               projection] :as cfg}
                        updates]
   (let [new-states (map :new-state updates)
         new-state (apply merge new-states)
-        partial-state (select-keys new-state param-keypaths)
+        partial-state (select-keys new-state (concat param-keypaths transient-param-keypaths))
         prev (keypath new-state)
         args {:partial-state partial-state
               :prev prev
@@ -71,8 +75,11 @@
                           send-update
                           pub
                           keypath
-                          {:keys [param-keypaths periodicity] :as cfg}]
+                          {:keys [param-keypaths
+                                  transient-param-keypaths
+                                  periodicity] :as cfg}]
   (let [update-ch (async/chan)
+        transient-update-ch (async/chan)
         param-ancestors (->> param-keypaths
                              (mapcat all-ancestors)
                              (into #{}))
@@ -80,15 +87,19 @@
                                  (filter (comp not param-ancestors))
                                  (into #{}))]
     (async/go-loop []
+      (when-let [update (async/<! transient-update-ch)]
+        (do (handle-updates send-update keypath cfg [update])
+            (recur))))
+    (async/go-loop []
       (when-let [update (async/<! update-ch)]
-                ; based on the origin-keypath in update, we find all of the params of ours that we expect to be fired.
-                ; we wait for all of them before running
-        (let [{updated-keypath :keypath :keys [txn-id orig-keypath]} update
-              orig-descendants (descendants orig-keypath)
-                      ; note: required-params is empty when (= updated-keypath keypath) by non-cyclicality
+        ; based on the origin-keypath in update, we find all of the params of ours that we expect to be fired.
+        ; we wait for all of them before running
+        (let [{updated-keypath :keypath :keys [txn-id origin-keypath]} update
+              orig-descendants (descendants origin-keypath)
+              ; note: required-params is empty when (= updated-keypath keypath) by non-cyclicality
               required-params (clojure.set/intersection orig-descendants uniq-param-keypaths)
               needed-params (disj required-params updated-keypath)
-                      ; TODO: should definitely have a transaction timeout
+              ; TODO: should definitely have a transaction timeout
               {:keys [remaining updates]}
               (reduce
                (fn [{:keys [remaining updates]} _]
@@ -116,6 +127,8 @@
       (async/sub periodicity-pub ::periodically update-ch))
     (doseq [param-keypath uniq-param-keypaths]
       (async/sub pub param-keypath update-ch))
+    (doseq [transient-param-keypath transient-param-keypaths]
+      (async/sub pub transient-param-keypath transient-update-ch))
     (async/sub pub keypath update-ch)))
 
 (defn- closure-for-node [closure-by-node nexts-by-node is-cyclical? node]
@@ -203,6 +216,9 @@
         returns false, the value is rejected and the state is not updated.
       - :param-keypaths that list the keypaths that should be selected from the state when
         collecting the partial-state to pass to the producer
+      - :transient-keypaths that list additional keypaths that should be selected from the state
+        when collecting the partial-state to pass to the producer but which do not cause downstream
+        producers to be invoked.
       - :param-keypath-validators that map keypaths from :param-keypaths to a validator function.
         If the validator function returns false, the producer will not be invoked.
       - :periodicity specifying :at-least-every-ms and an optional :jitter-pct.  The producer
@@ -247,14 +263,24 @@
                                                      :keypath keypath
                                                      :txn-source source
                                                      :new-state @state})))
+           transient-update? (fn [keypath update-path]
+                              (let [prev (last update-path)]
+                                (and (keyword? prev)
+                                     (->> producer-cfg-by-keypath
+                                          keypath
+                                          :transient-param-keypaths
+                                          (into #{})
+                                          prev
+                                          some?))))
            send-update (fn [{:keys [update-path txn-id origin-keypath] :as update} keypath new-state]
-                         (async/go (if (terminal-node? keypath)
-                                     (async/>! txn-chan (assoc update :action :end))
-                                     (async/>! updates-chan {:update-path (conj update-path keypath)
-                                                             :txn-id txn-id
-                                                             :origin-keypath origin-keypath
-                                                             :keypath keypath
-                                                             :new-state new-state}))))]
+                         (cond
+                          (transient-update? keypath update-path) nil
+                          (terminal-node? keypath) (async/put! txn-chan (assoc update :action :end))
+                          :else (async/>! updates-chan {:update-path (conj update-path keypath)
+                                                        :txn-id txn-id
+                                                        :origin-keypath origin-keypath
+                                                        :keypath keypath
+                                                        :new-state new-state})))]
        (async/go-loop []
          (when-let [{:keys [txn-id action] :as txn} (async/<! txn-chan)]
            (if (not= action :start)
