@@ -45,12 +45,11 @@
                       (map :update-path updates)) ; TODO: this seems wrong
         handle-result (partial on-result update-path send-update new-state prev keypath cfg)]
     (cond
-            ; TODO: timeouts
+      ; TODO: timeouts
       (some? io-producer) (async/go (io-producer args handle-result))
-      (some? compute-producer) (async/go (let [res (async/thread (compute-producer args))]
-                                           (handle-result (async/<! res))))
-      (some? projection) (async/go (let [res (async/thread (projection args))]
-                                     (handle-result (async/<! res)))))))
+      (some? compute-producer) (async/take! (async/thread (compute-producer args)) handle-result)
+      (some? projection) (async/take! (async/thread (projection args)) handle-result))))
+
 (defn- register-periodicity [start-txn keypath update-pub {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0}}]
   (when (some? periodicity)
     (let [periodicity-ch (async/chan)
