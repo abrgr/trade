@@ -71,6 +71,7 @@
                           descendants
                           all-ancestors
                           start-txn
+                          register-post-txn-hook
                           send-update
                           pub
                           keypath
@@ -87,8 +88,8 @@
                                  (into #{}))]
     (async/go-loop []
       (when-let [update (async/<! transient-update-ch)]
-        (do (handle-updates send-update keypath cfg [update])
-            (recur))))
+        (register-post-txn-hook #(handle-updates %1 keypath cfg [%2]))
+        (recur)))
     (async/go-loop []
       (when-let [update (async/<! update-ch)]
         ; based on the origin-keypath in update, we find all of the params of ours that we expect to be fired.
@@ -230,6 +231,8 @@
      (let [state (atom init)
            updates-chan (async/chan)
            txn-chan (async/chan)
+           post-txn-hook-chan (async/chan)
+           post-txn-hooks (atom [])
            p (async/pub updates-chan :keypath)
            all-ancestors (ancestors-for-all (->> producer-cfg-by-keypath
                                                  (map (fn [[keypath {:keys [param-keypaths]}]]
@@ -262,24 +265,21 @@
                                                      :keypath keypath
                                                      :txn-source source
                                                      :new-state @state})))
-           transient-update? (fn [keypath update-path]
-                              (let [prev (last update-path)]
-                                (and (keyword? prev)
-                                     (->> producer-cfg-by-keypath
-                                          keypath
-                                          :transient-param-keypaths
-                                          (into #{})
-                                          prev
-                                          some?))))
-           send-update (fn [{:keys [update-path txn-id origin-keypath] :as update} keypath new-state]
-                         (cond
-                          (transient-update? keypath update-path) nil
-                          (terminal-node? keypath) (async/put! txn-chan (assoc update :action :end))
-                          :else (async/>! updates-chan {:update-path (conj update-path keypath)
-                                                        :txn-id txn-id
-                                                        :origin-keypath origin-keypath
-                                                        :keypath keypath
-                                                        :new-state new-state})))]
+           make-update (fn [{:keys [update-path txn-id origin-keypath] :as update} keypath new-state]
+                          {:update-path (conj update-path keypath)
+                           :txn-id txn-id
+                           :origin-keypath origin-keypath
+                           :keypath keypath
+                           :new-state new-state})
+           send-post-txn-hook-update (fn [upd keypath new-state]
+                                      (async/put! post-txn-hook-ch (make-update upd keypath new-state)))
+           register-post-txn-hook (fn [{:keys [txn-id]} f]
+                                    ; TODO: check current txn-id
+                                    (swap! post-txn-hooks (partial concat [f])))
+           send-update (fn [upd keypath new-state]
+                         (async/put!
+                           (if (terminal-node? keypath) post-txn-hook-ch updates-chan)
+                           (make-update upd keypath new-state)))]
        (async/go-loop []
          (when-let [{:keys [txn-id action] :as txn} (async/<! txn-chan)]
            (if (not= action :start)
@@ -292,8 +292,17 @@
                    (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
                    (send state #(merge % (apply dissoc new-state projections)))))))
            (recur)))
+       (async/go-loop []
+         (when-let [upd (async/<! post-txn-hook-ch)]
+           (let [hooks @post-txn-hooks
+                 hook (first hooks)]
+             (if (empty? hooks)
+               (async/>! txn-chan (assoc upd :action :end)) ; no more hooks, end the txn
+               (do (swap! post-txn-hooks next)
+                   (hook send-post-txn-hook-update upd)))
+             (recur))))
        (doseq [[keypath cfg] producer-cfg-by-keypath]
-         (register-producer logger state descendants all-ancestors start-txn send-update p keypath cfg))
+         (register-producer logger state descendants all-ancestors start-txn register-post-txn-hook send-update p keypath cfg))
        state)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
