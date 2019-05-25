@@ -104,7 +104,7 @@
                              (sort-by :price)
                              reverse
                              (into []))}})]
-    (api/order-book
+    (api/get-order-book
       (:auth venue)
       market-id
       full-market-url
@@ -210,17 +210,18 @@
   (apply -get-auth (map creds [:email :pwd]) send-result))
 
 (defmacro with-reauth [creds auth invocation]
-  (let [send-result (last invocation)]
-    `(let [wrapper# (fn [res] (if (and (instance? Throwable res)
+  (let [send-result (last invocation)
+        wrapper-sym (gensym)]
+    `(let [~wrapper-sym (fn [res] (if (and (instance? Throwable res)
                                        (= (-> res ex-data :status) 401))
                                 (do (creds->auth
                                       ~creds
                                       (fn [a] (swap! ~auth (constantly a))))
                                     ~(concat
-                                      (butlast ~invocation)
+                                      (butlast invocation)
                                       [send-result]))
                                 (~send-result res)))]
-        ~(concat (butlast ~invocation) [wrapper#]))))
+        ~(concat (butlast invocation) [wrapper-sym]))))
                                    
 (defn make-venue
   "Creates a venue"

@@ -4,6 +4,7 @@
             [clj-http.cookies :as cookies]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [clojure.core.async :as async]
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.lib.utils :as utils])
   (:gen-class))
@@ -28,7 +29,7 @@
 
 (def cm (conn-mgr/make-reusable-conn-manager {:timeout 10 :threads 30}))
 
-(def async-cm (conn/make-reuseable-async-conn-manager {:timeout 10})
+(def async-cm (conn-mgr/make-reuseable-async-conn-manager {:timeout 10}))
 
 (def cs (cookies/cookie-store))
 
@@ -354,9 +355,9 @@
     (http-get
       url
       {:headers headers}
-      #(if (-> %:body nil?)
+      #(if (-> % :body nil?)
         (ex-info "Bad order book response" {:resp %})
-        {:order-book (merge (resp-from-json %value-fns) {:contract-id contract-id})})
+        {:order-book (merge (resp-from-json % value-fns) {:contract-id contract-id})})
       send-result)))
 
 (defn get-positions

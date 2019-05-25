@@ -50,7 +50,7 @@
       (some? compute-producer) (async/take! (async/thread (compute-producer args)) handle-result)
       (some? projection) (async/take! (async/thread (projection args)) handle-result))))
 
-(defn- register-periodicity [start-txn keypath update-pub {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0}}]
+(defn- register-periodicity [start-txn keypath update-pub {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0} :as periodicity}]
   (when (some? periodicity)
     (let [periodicity-ch (async/chan)
           periodicity-pub (async/pub periodicity-ch (constantly ::periodically))
@@ -272,16 +272,16 @@
                            :keypath keypath
                            :new-state new-state})
            send-post-txn-hook-update (fn [upd keypath new-state]
-                                      (async/put! post-txn-hook-ch (make-update upd keypath new-state)))
+                                      (async/put! post-txn-hook-chan (make-update upd keypath new-state)))
            register-post-txn-hook (fn [{:keys [txn-id]} f]
                                     ; TODO: check current txn-id
                                     (swap! post-txn-hooks (partial concat [f])))
            send-update (fn [upd keypath new-state]
                          (async/put!
-                           (if (terminal-node? keypath) post-txn-hook-ch updates-chan)
+                           (if (terminal-node? keypath) post-txn-hook-chan updates-chan)
                            (make-update upd keypath new-state)))]
        (async/go-loop []
-         (when-let [{:keys [txn-id action] :as txn} (async/<! txn-chan)]
+         (when-let [{:keys [txn-id action new-state] :as txn} (async/<! txn-chan)]
            (if (not= action :start)
              (logger :error "Expected start transaction" {:txn txn})
              (do
@@ -293,7 +293,7 @@
                    (send state #(merge % (apply dissoc new-state projections)))))))
            (recur)))
        (async/go-loop []
-         (when-let [upd (async/<! post-txn-hook-ch)]
+         (when-let [upd (async/<! post-txn-hook-chan)]
            (let [hooks @post-txn-hooks
                  hook (first hooks)]
              (if (empty? hooks)
