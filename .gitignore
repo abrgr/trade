@@ -14,3 +14,4 @@ pom.xml.asc
 .*auth
 /config
 /prometheus-data
+.*.swp

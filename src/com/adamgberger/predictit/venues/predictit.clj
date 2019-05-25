@@ -212,15 +212,15 @@
 (defmacro with-reauth [creds auth invocation]
   (let [send-result (last invocation)
         wrapper-sym (gensym)]
-    `(let [~wrapper-sym (fn [res] (if (and (instance? Throwable res)
-                                       (= (-> res ex-data :status) 401))
+    `(let [~wrapper-sym (fn [res#] (if (and (instance? Throwable res#)
+                                       (= (-> res# ex-data :status) 401))
                                 (do (creds->auth
                                       ~creds
-                                      (fn [a] (swap! ~auth (constantly a))))
+                                      (fn [a#] (swap! ~auth (constantly a#))))
                                     ~(concat
                                       (butlast invocation)
                                       [send-result]))
-                                (~send-result res)))]
+                                (~send-result res#)))]
         ~(concat (butlast invocation) [wrapper-sym]))))
                                    
 (defn make-venue
@@ -244,8 +244,8 @@
             (with-reauth creds auth (-positions @auth send-result)))
           (contracts [this market-id full-market-url send-result]
             (with-reauth creds auth (-contracts @auth market-id full-market-url send-result)))
-          (order-book [this market-id market-name contract-id send-result]
-            (with-reauth creds auth (-monitor-order-book @auth market-id market-name contract-id send-result)))
+          (order-book [this market-id full-market-url contract-id send-result]
+            (with-reauth creds auth (-order-book @auth market-id full-market-url contract-id send-result)))
           (orders [this market-id full-market-url contract-id send-result]
             (with-reauth creds auth (-orders @auth market-id full-market-url contract-id send-result)))
           (submit-order [venue market-id contract-id trade-type qty price send-result]

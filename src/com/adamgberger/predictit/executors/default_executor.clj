@@ -292,7 +292,7 @@
     {:permitted? permitted?
      :buying-power bp}))
 
-(defn- get-orders-by-contract-id [orders]
+(defn- get-orders-by-contract-id [orders mkt-id]
   (->> (get orders mkt-id)
        (map (fn [[contract-id {:keys [orders]}]]
              [contract-id orders]))
@@ -310,7 +310,7 @@
     (map
       (fn [[mkt-id req-positions]]
         (let [mkt (get mkts-by-id mkt-id)
-              outstanding-orders-by-contract-id (get-orders-by-contract-id orders)]
+              outstanding-orders-by-contract-id (get-orders-by-contract-id orders mkt-id)]
           (if (nil? bankroll)
             nil
             (let [contracts-by-id (get contracts mkt-id)
@@ -325,7 +325,7 @@
     (filter some?)
     (into {})))
 
-(defn generate-immediately-executable-trades [trades-by-mkt-id orders bal]
+(defn generate-immediately-executable-trades [trades-by-mkt-id orders bal mkts-by-id]
   (->> trades-by-mkt-id
        (mapcat
         (fn [[mkt-id trades]]
@@ -342,7 +342,7 @@
                                         total
                                         orders))
                                      0.0
-                                     (get-orders-by-contract-id orders))
+                                     (get-orders-by-contract-id orders mkt-id))
                 trades-of-types (fn [is-type? trades]
                                   (filter #(is-type? (:trade-type %)) trades))
                 trades-to-execute-immediately (fn [[contract-id trades]]
@@ -357,7 +357,7 @@
             (->> trades-to-submit
                  (reduce
                   (fn [{:keys [trades bp] :as state} trade]
-                    (let [{:keys [permitted? buying-power]} (trade-policy bp mkt contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
+                    (let [{:keys [permitted? buying-power]} (trade-policy bp (get mkts-by-id mkt-id) contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
                       (if permitted?
                         {:trades (conj trades trade)
                          :bp buying-power}

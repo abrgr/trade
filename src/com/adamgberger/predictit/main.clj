@@ -3,13 +3,11 @@
             [com.adamgberger.predictit.lib.utils :as utils]
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.lib.observable-state :as obs]
-            [com.adamgberger.predictit.venues :as vs]
             [com.adamgberger.predictit.venues.venue :as v]
-            [com.adamgberger.predictit.strategies :as strats]
             [com.adamgberger.predictit.inputs.approval-rating-rcp :as rcp-input]
             [com.adamgberger.predictit.inputs.rasmussen :as rasmussen-input]
             [com.adamgberger.predictit.inputs.yougov-weekly-registered :as yougov-weekly-input]
-            [com.adamgberger.predictit.inputs.approval-rating-the-hill:as the-hill-input]
+            [com.adamgberger.predictit.inputs.approval-rating-the-hill :as the-hill-input]
             [com.adamgberger.predictit.estimators.approval-rating-rcp :as rcp-estimator]
             [com.adamgberger.predictit.executors.default-executor :as exec])
   (:gen-class))
@@ -367,11 +365,12 @@
                      :executor/immediately-executable-trades
                       {:compute-producer (fn [{{:strategy-rcp/keys [desired-trades]
                                                 :executor/keys [outstanding-orders]
-                                                :venue-predictit/keys [bal]} :partial-state}]
-                                          (exec/generate-immediately-executable-trades desired-trades outstanding-orders bal))
+                                                :venue-predictit/keys [bal mkts-by-id]} :partial-state}]
+                                          (exec/generate-immediately-executable-trades desired-trades outstanding-orders bal mkts-by-id))
                        :param-keypaths [:executor/desired-trades
                                         :venue-predictit/bal
-                                        :executor/outstanding-orders]
+                                        :executor/outstanding-orders
+                                        :venue-predictit/mkts-by-id]
                        :periodicity {:at-least-every-ms twice-per-minute
                                      :jitter-pct 0.2}}
                      :executor/executions
