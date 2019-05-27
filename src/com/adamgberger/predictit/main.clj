@@ -4,10 +4,12 @@
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.lib.observable-state :as obs]
             [com.adamgberger.predictit.venues.venue :as v]
+            [com.adamgberger.predictit.venues.predictit :as pv]
             [com.adamgberger.predictit.inputs.approval-rating-rcp :as rcp-input]
             [com.adamgberger.predictit.inputs.rasmussen :as rasmussen-input]
             [com.adamgberger.predictit.inputs.yougov-weekly-registered :as yougov-weekly-input]
             [com.adamgberger.predictit.inputs.approval-rating-the-hill :as the-hill-input]
+            [com.adamgberger.predictit.strategies.approval-rating-rcp :as strategy-rcp]
             [com.adamgberger.predictit.estimators.approval-rating-rcp :as rcp-estimator]
             [com.adamgberger.predictit.executors.default-executor :as exec])
   (:gen-class))
@@ -88,13 +90,14 @@
         once-per-10-minutes (* once-per-minute 10)
         obs-state (obs/observable-state
                     (fn [send-result]
-                      (v/make-venue
-                        cfg
-                        #(send-result
-                          (merge {:cfg (->> cfg
-                                            (filter #(not= (first %) :creds))
-                                            (into {}))}
-                                 {:venue-predictit/venue %}))))
+                      (pv/make-venue
+                        (:creds cfg)
+                        (fn [venue]
+                          (send-result
+                            (merge {:cfg (->> cfg
+                                              (filter #(not= (first %) :creds))
+                                              (into {}))}
+                                   {:venue-predictit/venue venue})))))
                     {:venue-predictit/mkts
                       {:io-producer (fn [{{:venue-predictit/keys [venue]} :partial-state} send-result]
                                       (v/available-markets venue send-result))
@@ -119,9 +122,7 @@
                        :param-keypaths [:strategy-rcp/mkts]}
                      :venue-predictit/mkts-by-id
                       {:projection (fn [{{:venue-predictit/keys [monitored-mkts]} :partial-state}]
-                                     (->> (group-by monitored-mkts :market-id)
-                                          (map #(vector (first %) (-> % second first)))
-                                          (into #{})))
+                                     (utils/index-by monitored-mkts :market-id))
                        :param-keypaths [:venue-predictit/monitored-mkts]}
                      :venue-predictit/contracts
                       {:io-producer (fn [{{:venue-predictit/keys [venue monitored-mkts]} :partial-state} send-result]
@@ -130,11 +131,12 @@
                                             (fn [{:keys [market-id market-url]}]
                                               (let [c (async/chan)]
                                                 (v/contracts
-                                                  venue market-id
+                                                  venue
+                                                  market-id
                                                   market-url
                                                   #(do (async/put! c (assoc % :mkt-id market-id))
-                                                       (async/close! c))
-                                                c))))
+                                                       (async/close! c)))
+                                                c)))
                                            async/merge
                                            (async/into [])
                                            (async-transform-single
@@ -146,7 +148,7 @@
                                                     contract))
                                                 {}
                                                 %))))
-                       :param-keypaths [:venue-predictit/venue venue-predictit/monitored-mkts]}
+                       :param-keypaths [:venue-predictit/venue :venue-predictit/monitored-mkts]}
                      :venue-predictit/order-books
                       {:io-producer (fn [{{:venue-predictit/keys [venue contracts mkts-by-id]} :partial-state} send-result]
                                       (->> contracts
@@ -220,6 +222,12 @@
                        :periodicity {:at-least-every-ms once-per-10-minutes
                                     :jitter-pct 0.2}
                        :param-keypaths [:venue-predictit/venue :venue-predictit/pos :venue-predictit/mkts-by-id]}
+                     :venue-predictit/pos-by-contract-id
+                      {:projection (fn [{{:venue-predictit/keys [pos]} :partial-state}]
+                                     (->> pos
+                                          (mapcat :contracts)
+                                          (#(utils/index-by % :contract-id))))
+                       :param-keypaths [:venue-predictit/pos]}
                      :venue-predictit/req-pos
                       {:projection (fn [{{:strategy-rcp/keys [trades]} :partial-state}]
                                      trades)
@@ -264,7 +272,7 @@
                                                               the-hill-current]} :partial-state}
                                               send-result]
                                           (rcp-estimator/estimate
-                                            (get-in stats-for-days [:com.adamgberger.predictit.estimators.approval-rating-rcp/id])
+                                            (get-in cfg [:estimators :com.adamgberger.predictit.estimators.approval-rating-rcp/id :stats-for-days])
                                             rcp-current
                                             rcp-hist
                                             rasmussen-current
@@ -339,13 +347,13 @@
                                         :venue-predictit/pos
                                         :strategy-rcp/mkt-ids]}
                      :strategy-rcp/desired-trades
-                      {:compute-producer (fn [{{:venue-predictit/keys [mkts-by-id contracts pos bal order-books]
+                      {:compute-producer (fn [{{:venue-predictit/keys [mkts-by-id pos bal order-books pos-by-contract-id]
                                                 :executor/keys [outstanding-orders]
                                                 :strategy-rcp/keys [bankroll req-pos]} :partial-state}]
-                                          (exec/generate-desired-trades bankroll mkts-by-id contracts req-pos pos bal outstanding-orders order-books))
+                                          (exec/generate-desired-trades bankroll mkts-by-id req-pos pos-by-contract-id bal outstanding-orders order-books))
                        :param-keypaths [:strategy-rcp/bankroll
                                         :venue-predictit/mkts-by-id
-                                        :venue-predictit/contracts
+                                        :venue-predictit/pos-by-contract-id
                                         :strategy-rcp/req-pos
                                         :venue-predictit/pos
                                         :venue-predictit/bal
@@ -365,10 +373,12 @@
                      :executor/immediately-executable-trades
                       {:compute-producer (fn [{{:strategy-rcp/keys [desired-trades]
                                                 :executor/keys [outstanding-orders]
-                                                :venue-predictit/keys [bal mkts-by-id]} :partial-state}]
-                                          (exec/generate-immediately-executable-trades desired-trades outstanding-orders bal mkts-by-id))
+                                                :venue-predictit/keys [bal mkts-by-id pos-by-contract-id contracts]} :partial-state}]
+                                          (exec/generate-immediately-executable-trades desired-trades outstanding-orders bal mkts-by-id pos-by-contract-id contracts))
                        :param-keypaths [:executor/desired-trades
                                         :venue-predictit/bal
+                                        :venue-predictit/pos-by-contract-id
+                                        :venue-predictit/contracts
                                         :executor/outstanding-orders
                                         :venue-predictit/mkts-by-id]
                        :periodicity {:at-least-every-ms twice-per-minute
@@ -380,9 +390,7 @@
                                       (exec/execute-orders venue immediately-executable-trades send-result))
                       :param-keypaths [:executor/immediately-executable-trades
                                        :venue-predictit/venue]}}
-                    :logger l/log)]
-    (state-watchdog state end-chan)
-    (async/<!! end-chan)))
+                    :logger l/log)]))
 
 (defn -main
   [& args]

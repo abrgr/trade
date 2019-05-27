@@ -253,3 +253,8 @@
   (let [c (async/chan)]
     (async/pipeline-async 1 c f in-ch)
     c))
+
+(defn index-by [coll f]
+  (->> (group-by coll f)
+       (map #(vector (first %) (-> % second first)))
+       (into #{})))

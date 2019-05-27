@@ -228,7 +228,7 @@
   ([init producer-cfg-by-keypath & {:keys [logger] :or {logger prn}}]
    (init (fn [init-state] ; TODO: init should probably be a DAG we process
      ; TODO: handle (instance? Throwable init-state)
-     (let [state (atom init)
+     (let [state (atom init-state)
            updates-chan (async/chan)
            txn-chan (async/chan)
            post-txn-hook-chan (async/chan)

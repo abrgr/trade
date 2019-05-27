@@ -197,17 +197,19 @@
         nil))))
 
 (defn- -get-auth
-  [email pwd]
+  [email pwd send-result]
   (let [cached-auth (-get-cached-auth email)]
     (if (some? cached-auth)
       (do (l/log :info "Using cached auth for predictit")
-          cached-auth)
-      (let [new-auth (api/auth email pwd)]
-        (spit auth-cache-fname (pr-str new-auth))
-        new-auth))))
+          (send-result cached-auth))
+      (api/auth
+        email
+        pwd 
+        #(do (spit auth-cache-fname (pr-str %))
+             (send-result %))))))
 
 (defn creds->auth [creds send-result]
-  (apply -get-auth (map creds [:email :pwd]) send-result))
+  (-get-auth (:email creds) (:pwd creds) send-result))
 
 (defmacro with-reauth [creds auth invocation]
   (let [send-result (last invocation)

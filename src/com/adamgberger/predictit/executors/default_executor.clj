@@ -300,9 +300,8 @@
 
 (defn generate-desired-trades [bankroll
                                mkts-by-id
-                               contracts
                                req-pos
-                               pos
+                               pos-by-contract-id
                                bal
                                orders
                                order-books]
@@ -313,19 +312,12 @@
               outstanding-orders-by-contract-id (get-orders-by-contract-id orders mkt-id)]
           (if (nil? bankroll)
             nil
-            (let [contracts-by-id (get contracts mkt-id)
-                  desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)
-                  pos-by-contract-id (->> pos
-                                          (mapcat :contracts)
-                                          (reduce
-                                           (fn [by-id c]
-                                             (assoc by-id (:contract-id c) c))
-                                           {}))]
+            (let [desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)]
               [mkt-id (adjust-desired-pos-for-actuals order-books mkt-id desired-pos pos-by-contract-id outstanding-orders-by-contract-id)])))))
     (filter some?)
     (into {})))
 
-(defn generate-immediately-executable-trades [trades-by-mkt-id orders bal mkts-by-id]
+(defn generate-immediately-executable-trades [trades-by-mkt-id orders bal mkts-by-id pos-by-contract-id contracts]
   (->> trades-by-mkt-id
        (mapcat
         (fn [[mkt-id trades]]
@@ -357,7 +349,10 @@
             (->> trades-to-submit
                  (reduce
                   (fn [{:keys [trades bp] :as state} trade]
-                    (let [{:keys [permitted? buying-power]} (trade-policy bp (get mkts-by-id mkt-id) contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
+                    (let [outstanding-orders-by-contract-id (get-orders-by-contract-id orders mkt-id)
+                          mkt (get mkts-by-id mkt-id)
+                          contracts-by-id (get contracts mkt-id)
+                          {:keys [permitted? buying-power]} (trade-policy bp contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
                       (if permitted?
                         {:trades (conj trades trade)
                          :bp buying-power}
@@ -373,7 +368,7 @@
   (->> (async/to-chan orders-to-submit)
        (utils/async-map
          (fn [order out-ch]
-           (submit-for-execution venue order (partial async-put-once out-ch))))
+           (submit-for-execution venue order (partial utils/async-put-once out-ch))))
        (async/into [])
        (#(async/take! % send-result))))
 
