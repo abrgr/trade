@@ -12,20 +12,32 @@
    state))
 
 (defn- with-merge-meta [obj m]
-  (with-meta obj (merge (meta obj) m)))
+  (if (nil? obj)
+    nil
+    (vary-meta obj #(merge % m))))
 
-(defn- on-result [update-path send-update new-state prev keypath {:keys [validator] :as cfg} result]
+(defn- on-result [upd logger update-path send-update new-state prev keypath {:keys [validator] :as cfg} result]
   ; TODO: handle case where result is a throwable
+
+  (logger :info "Finished producer" {:cfg cfg :result result})
   (let [valid? (or (nil? validator)
                    (validator result))
         effective-result (if valid?
                            result
-                           (with-merge-meta prev {::invalid-value result}))
+                           (if (nil? prev)
+                             nil
+                             (with-merge-meta prev {::invalid-value result})))
         new-val (with-merge-meta effective-result {::updated-at (java.time.Instant/now)
-                                                   ::prev (with-meta prev nil)})]
-    (send-update update-path keypath (assoc new-state keypath new-val))))
+                                                   ::prev (if (nil? prev)
+                                                            nil
+                                                            (vary-meta prev #(dissoc % ::prev)))})
+        upd' {:update-path update-path
+              :origin-path (:origin-keypath upd)
+              :txn-id (:txn-id upd)}]
+    (send-update upd' keypath (assoc new-state keypath new-val))))
 
-(defn- handle-updates [send-update
+(defn- handle-updates [logger
+                       send-update
                        keypath
                        {:keys [param-keypaths
                                transient-param-keypaths
@@ -43,7 +55,8 @@
         update-path (if (= (count updates) 1)
                       (-> updates first :update-path)
                       (map :update-path updates)) ; TODO: this seems wrong
-        handle-result (partial on-result update-path send-update new-state prev keypath cfg)]
+        handle-result (partial on-result (last updates) logger update-path send-update new-state prev keypath cfg)]
+    (logger :info "Starting producer" {:cfg cfg :args args})
     (cond
       ; TODO: timeouts
       (some? io-producer) (async/go (io-producer args handle-result))
@@ -56,15 +69,16 @@
           periodicity-pub (async/pub periodicity-ch (constantly ::periodically))
           keypath-change-ch (async/chan)]
       (async/go-loop []
-                ; idea: loop here waiting for our keypath to produce something OR for the timeout to elapse
-                ; if the timeout elapses, publish an "update" to our pub
-                ; have the producer subscribe to the pub we return (if we return one)
-                ; ACTUALLY... this needs to publish to a transaction creation queue so that we ensure we only have 1 txn 
-                ; in flight at a time.
+        ; idea: loop here waiting for our keypath to produce something OR for the timeout to elapse
+        ; if the timeout elapses, publish an "update" to our pub
+        ; have the producer subscribe to the pub we return (if we return one)
+        ; ACTUALLY... this needs to publish to a transaction creation queue so that we ensure we only have 1 txn 
+        ; in flight at a time.
         (let [[update port] (async/alts! [keypath-change-ch
                                           (async/timeout (* at-least-every-ms (+ 1 (* (rand) jitter-pct))))])]
           (when (not= port keypath-change-ch)
-            (start-txn :periodicity keypath)))))))
+            (start-txn :periodicity keypath))))
+      periodicity-pub)))
 
 (defn- register-producer [logger
                           state-atom
@@ -87,8 +101,8 @@
                                  (filter (comp not param-ancestors))
                                  (into #{}))]
     (async/go-loop []
-      (when-let [update (async/<! transient-update-ch)]
-        (register-post-txn-hook #(handle-updates %1 keypath cfg [%2]))
+      (when-let [upd (async/<! transient-update-ch)]
+        (register-post-txn-hook #(handle-updates logger %1 keypath cfg [%2]))
         (recur)))
     (async/go-loop []
       (when-let [update (async/<! update-ch)]
@@ -121,7 +135,7 @@
                                                           :updates updates
                                                           :needed-params needed-params
                                                           :required-params required-params}))
-          (do (handle-updates send-update keypath cfg updates)
+          (do (handle-updates logger send-update keypath cfg updates)
               (recur)))))
     (when-let [periodicity-pub (register-periodicity start-txn keypath pub periodicity)]
       (async/sub periodicity-pub ::periodically update-ch))
@@ -230,7 +244,8 @@
      ; TODO: handle (instance? Throwable init-state)
      (let [state (atom init-state)
            updates-chan (async/chan)
-           txn-chan (async/chan)
+           start-txn-chan (async/chan)
+           end-txn-chan (async/chan)
            post-txn-hook-chan (async/chan)
            post-txn-hooks (atom [])
            p (async/pub updates-chan :keypath)
@@ -258,14 +273,14 @@
                             (filter #(some? (get-in producer-cfg-by-keypath [% :projection])))
                             (into #{}))
            start-txn (fn [source keypath]
-                       (async/go (async/>! txn-chan {:action :start
-                                                     :update-path []
-                                                     :txn-id (java.util.UUID/randomUUID)
-                                                     :origin-keypath keypath
-                                                     :keypath keypath
-                                                     :txn-source source
-                                                     :new-state @state})))
-           make-update (fn [{:keys [update-path txn-id origin-keypath] :as update} keypath new-state]
+                       (async/go (async/>! start-txn-chan {:action :start
+                                                           :update-path []
+                                                           :txn-id (java.util.UUID/randomUUID)
+                                                           :origin-keypath keypath
+                                                           :keypath keypath
+                                                           :txn-source source
+                                                           :new-state @state})))
+           make-update (fn [{:keys [update-path txn-id origin-keypath]} keypath new-state]
                           {:update-path (conj update-path keypath)
                            :txn-id txn-id
                            :origin-keypath origin-keypath
@@ -281,12 +296,13 @@
                            (if (terminal-node? keypath) post-txn-hook-chan updates-chan)
                            (make-update upd keypath new-state)))]
        (async/go-loop []
-         (when-let [{:keys [txn-id action new-state] :as txn} (async/<! txn-chan)]
+         (when-let [{:keys [txn-id action new-state] :as txn} (async/<! start-txn-chan)]
+           (logger :info "Starting txn" {:txn txn})
            (if (not= action :start)
              (logger :error "Expected start transaction" {:txn txn})
              (do
                (async/>! updates-chan (select-keys txn [:update-path :txn-id :origin-keypath :keypath :new-state]))
-               (when-let [{end-txn-id :txn-id end-action :action :as end-txn} (async/<! txn-chan)]
+               (when-let [{end-txn-id :txn-id end-action :action :as end-txn} (async/<! end-txn-chan)]
                  (if (not (and (= end-txn-id txn-id)
                                (= end-action :end)))
                    (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
@@ -297,7 +313,7 @@
            (let [hooks @post-txn-hooks
                  hook (first hooks)]
              (if (empty? hooks)
-               (async/>! txn-chan (assoc upd :action :end)) ; no more hooks, end the txn
+               (async/>! end-txn-chan (assoc upd :action :end)) ; no more hooks, end the txn
                (do (swap! post-txn-hooks next)
                    (hook send-post-txn-hook-update upd)))
              (recur))))

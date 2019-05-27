@@ -269,8 +269,7 @@
                                                               rcp-hist
                                                               rasmussen-current
                                                               yougov-weekly-registered-current
-                                                              the-hill-current]} :partial-state}
-                                              send-result]
+                                                              the-hill-current]} :partial-state}]
                                           (rcp-estimator/estimate
                                             (get-in cfg [:estimators :com.adamgberger.predictit.estimators.approval-rating-rcp/id :stats-for-days])
                                             rcp-current

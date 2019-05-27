@@ -131,13 +131,12 @@
                  :password pwd
                  :grant_type "password"
                  :rememberMe false}}
-        value-fns {:.issued utils/parse-offset-datetime
-                   :.expires utils/parse-offset-datetime}]
+        value-fns {}]
     (http-post
       (predictit-api-url "/Account/token")
       params
       #(send-result
-        (if (-> % :body some?)
+        (if (-> % :body nil?)
           (ex-info "Bad auth response" {:resp %})
           {:auth (resp-from-json % value-fns)}))
       send-result)))
