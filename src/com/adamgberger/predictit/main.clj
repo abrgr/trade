@@ -122,7 +122,7 @@
                        :param-keypaths [:strategy-rcp/mkts]}
                      :venue-predictit/mkts-by-id
                       {:projection (fn [{{:venue-predictit/keys [monitored-mkts]} :partial-state}]
-                                     (utils/index-by monitored-mkts :market-id))
+                                     (utils/index-by :market-id monitored-mkts))
                        :param-keypaths [:venue-predictit/monitored-mkts]}
                      :venue-predictit/contracts
                       {:io-producer (fn [{{:venue-predictit/keys [venue monitored-mkts]} :partial-state} send-result]
@@ -226,7 +226,7 @@
                       {:projection (fn [{{:venue-predictit/keys [pos]} :partial-state}]
                                      (->> pos
                                           (mapcat :contracts)
-                                          (#(utils/index-by % :contract-id))))
+                                          (utils/index-by :contract-id)))
                        :param-keypaths [:venue-predictit/pos]}
                      :venue-predictit/req-pos
                       {:projection (fn [{{:strategy-rcp/keys [trades]} :partial-state}]

@@ -51,7 +51,7 @@
               :key keypath}
         update-path (if (= (count updates) 1)
                       (-> updates first :update-path)
-                      (map :update-path updates)) ; TODO: this seems wrong
+                      (mapv :update-path updates)) ; TODO: this seems wrong
         handle-result (partial on-result (last updates) logger update-path send-update new-state prev keypath cfg)]
     (logger :info "Starting producer" {:cfg cfg :keypath keypath :args args :updates updates})
     (cond
