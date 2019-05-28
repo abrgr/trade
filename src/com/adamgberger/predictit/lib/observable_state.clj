@@ -103,7 +103,7 @@
     (async/go-loop []
       (when-let [{:keys [txn-source] :as upd} (async/<! periodicity-ch)]
         (logger :info "Periodicity update" {:keypath keypath :upd upd})
-        (handle-updates logger send-update keypath cfg [(merge upd {:keypath keypath :origin-keypath keypath})])
+        (handle-updates logger send-update keypath cfg [(merge upd {:keypath keypath :origin-keypath keypath :update-path []})])
         (recur)))
     (async/go-loop []
       (when-let [upd (async/<! update-ch)]
@@ -127,6 +127,8 @@
                               (do (logger :error "Mixed transactions" {:txn-id txn-id
                                                                        :next-txn-id next-txn-id
                                                                        :remaining remaining
+                                                                       :keypath keypath
+                                                                       :updates updates
                                                                        :next-keypath next-keypath
                                                                        :needed-params needed-params})
                                   ; TODO: don't continue
@@ -143,8 +145,7 @@
     (doseq [param-keypath uniq-param-keypaths]
       (async/sub pub param-keypath update-ch))
     (doseq [transient-param-keypath transient-param-keypaths]
-      (async/sub pub transient-param-keypath transient-update-ch))
-    (async/sub pub keypath update-ch)))
+      (async/sub pub transient-param-keypath transient-update-ch))))
 
 (defn- closure-for-node [closure-by-node nexts-by-node is-cyclical? node]
   (when (is-cyclical? node) (throw (ex-info "Cycle detected" {:node node :cycle is-cyclical?})))
