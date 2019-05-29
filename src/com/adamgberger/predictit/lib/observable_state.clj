@@ -16,22 +16,34 @@
     nil
     (vary-meta obj #(merge % m))))
 
-(defn- on-result [upd logger update-path send-update new-state prev keypath {:keys [validator] :as cfg} result]
-  ; TODO: handle case where result is a throwable
+(defn- on-result [upd logger update-path send-update state prev keypath {:keys [validator] :as cfg} result]
   (logger :info "Finished producer" {:cfg cfg :keypath keypath :result result :update upd})
-  (let [valid? (or (nil? validator)
-                   (validator result))
+  (let [exception? (instance? Throwable result)
+        invalid? (and (some? validator)
+                      (validator result))
+        valid? (not (or exception?  invalid?))
         effective-result (if valid?
                            result
-                           (if (nil? prev)
-                             nil
-                             (with-merge-meta prev {::invalid-value result})))
+                           (with-merge-meta prev {::invalid-value result}))
         new-val (with-merge-meta effective-result {::updated-at (java.time.Instant/now)
                                                    ::prev (if (nil? prev)
                                                             nil
                                                             (vary-meta prev #(dissoc % ::prev)))})
+        new-state (assoc state keypath new-val)
         upd' (assoc upd :update-path update-path)]
-    (send-update upd' keypath (assoc new-state keypath new-val))))
+    (when exception?
+      (logger :error "Exception in producer" {:keypath keypath
+                                              :exception result}))
+    (when invalid?
+      (logger :error "Invalid producer result" {:keypath keypath
+                                                :result result}))
+    (send-update upd' keypath new-state)))
+
+(defmacro throw->ret [& body]
+  `(try
+     ~body
+     (catch Exception e#
+       e#)))
 
 (defn- handle-updates [logger
                        send-update
@@ -56,9 +68,17 @@
     (logger :info "Starting producer" {:cfg cfg :keypath keypath :args args :updates updates})
     (cond
       ; TODO: timeouts
-      (some? io-producer) (async/go (io-producer args handle-result))
-      (some? compute-producer) (async/take! (async/thread (compute-producer args)) handle-result)
-      (some? projection) (async/take! (async/thread (projection args)) handle-result))))
+      (some? io-producer) (async/go
+                            (try
+                              (io-producer args handle-result)
+                              (catch Exception e
+                                (handle-result e))))
+      (some? compute-producer) (async/take!
+                                 (async/thread (throw->ret (compute-producer args)))
+                                 handle-result)
+      (some? projection) (async/take!
+                           (async/thread (throw->ret (projection args)))
+                           handle-result))))
 
 (defn- register-periodicity [start-txn keypath update-pub {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0} :as periodicity}]
   (when (some? periodicity)
@@ -97,12 +117,10 @@
                                  (into #{}))]
     (async/go-loop []
       (when-let [upd (async/<! transient-update-ch)]
-        (logger :info "Transient update" {:keypath keypath :upd upd})
         (register-post-txn-hook #(handle-updates logger %1 keypath cfg [%2]))
         (recur)))
     (async/go-loop []
       (when-let [{:keys [txn-source] :as upd} (async/<! periodicity-ch)]
-        (logger :info "Periodicity update" {:keypath keypath :upd upd})
         (handle-updates logger send-update keypath cfg [(merge upd {:keypath keypath :origin-keypath keypath :update-path []})])
         (recur)))
     (async/go-loop []
@@ -135,11 +153,8 @@
                                   [upd])
                               (recur (disj remaining next-keypath)
                                      (conj updates next-update))))))]
-          (logger :info "Param update" {:keypath keypath :updates updates})
           (handle-updates logger send-update keypath cfg updates)
           (recur))))
-    (logger :info "Subscribing to params" {:uniq-param-keypaths uniq-param-keypaths :keypath keypath})
-    (logger :info "Subscribing to trans" {:transient-param-keypaths transient-param-keypaths :keypath keypath})
     (when-let [periodicity-sentinel (register-periodicity start-txn keypath pub periodicity)]
       (async/sub pub periodicity-sentinel periodicity-ch))
     (doseq [param-keypath uniq-param-keypaths]
