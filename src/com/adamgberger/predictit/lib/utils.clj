@@ -254,6 +254,17 @@
     (async/pipeline-async 1 c f in-ch)
     c))
 
+(defn tap-timeout [ms f in-ch]
+  (let [c (async/chan)]
+    (async/go
+      (let [timeout-ch (async/timeout ms)
+            [v p] (async/alts! [in-ch timeout-ch])]
+        (if (= p timeout-ch)
+          (f)
+          (async/>! c v))
+        (async/close! c)))
+    c))
+
 (defn index-by [f coll]
   (->> (group-by f coll)
        (map #(vector (first %) (-> % second first)))

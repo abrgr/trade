@@ -41,7 +41,7 @@
 
 (defmacro throw->ret [& body]
   `(try
-     ~body
+     ~@body
      (catch Exception e#
        e#)))
 
