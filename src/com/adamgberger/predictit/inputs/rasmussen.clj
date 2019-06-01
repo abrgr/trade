@@ -34,7 +34,8 @@
                  (.format (java.time.format.DateTimeFormatter/ofPattern "MMMdd"))
                  (.toLowerCase))]
         ; rasmussen doesn't come out on weekends
-    (when-not (u/weekend-days? (.get today java.time.temporal.ChronoField/DAY_OF_WEEK))
+    (if (u/weekend-days? (.get today java.time.temporal.ChronoField/DAY_OF_WEEK))
+      (cb nil)
       (h/get
        (str "http://www.rasmussenreports.com/public_content/politics/trump_administration/prez_track_" date)
        {:async? true}
