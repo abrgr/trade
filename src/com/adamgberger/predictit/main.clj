@@ -177,7 +177,8 @@
                                                     [mkt-id contract-id]
                                                     order-book))
                                                 {}
-                                                %))))
+                                                %)
+                                             send-result)))
                        :periodicity {:at-least-every-ms once-per-minute
                                     :jitter-pct 0.2}
                        :param-keypaths [:venue-predictit/venue :venue-predictit/contracts :venue-predictit/mkts-by-id]}
