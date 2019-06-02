@@ -147,7 +147,8 @@
                                                     [mkt-id contract-id]
                                                     contract))
                                                 {}
-                                                %))))
+                                                %)
+                                             send-result)))
                        :param-keypaths [:venue-predictit/venue :venue-predictit/monitored-mkts]}
                      :venue-predictit/order-books
                       {:io-producer (fn [{{:venue-predictit/keys [venue contracts mkts-by-id]} :partial-state} send-result]

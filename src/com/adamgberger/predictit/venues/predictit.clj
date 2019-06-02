@@ -6,14 +6,22 @@
             [com.adamgberger.predictit.apis.predictit :as api])
   (:gen-class))
 
+(defn- xform-result [f send-result]
+  (fn [x]
+    (if (instance? Throwable x)
+      (send-result x)
+      (let [v (try (f x)
+                (catch Throwable t t))]
+        (send-result v)))))
+
 (defn- -current-available-balance
   "Gets the available cash for trading"
   [venue send-result]
   (api/get-balance
     (:auth venue)
-    #(-> %
-         (get-in [:balance :accountBalanceDecimal])
-         send-result)))
+    (xform-result
+      #(get-in % [:balance :accountBalanceDecimal])
+      send-result)))
 
 (defn- -available-markets
   [venue send-result]
@@ -26,13 +34,11 @@
                      :status (if (= (:status m) "Open") :open :closed)})]
     (api/get-markets
       (:auth venue)
-      #(if (instance? Throwable %)
-          (send-result %)
-          (->> %
-               :markets
-               (map adapt-mkt)
-               (into [])
-               send-result)))))
+      (xform-result
+        #(->> %
+              :markets
+              (mapv adapt-mkt))
+        send-result))))
 
 (def side-by-trade-type
   (utils/rev-assoc api/numeric-trade-types))
@@ -57,15 +63,14 @@
                     {:market-id mkt-id
                      :contracts (->> mkt
                                      :marketContracts
-                                     (map (partial adapt-contract mkt-id))
-                                     (into []))})]
+                                     (mapv (partial adapt-contract mkt-id)))})]
     (api/get-positions
       (:auth venue)
-      #(send-result
-          (->> %
-               :positions
-               (map adapt-pos)
-               (into []))))))
+      (xform-result
+        #(->> %
+              :positions
+              (mapv adapt-pos))
+        send-result))))
 
 (defn- -order-book
   [venue market-id full-market-url contract-id send-result]
@@ -109,10 +114,9 @@
       market-id
       full-market-url
       contract-id
-      #(send-result
-        (map
-         adapt-order-book
-         %)))))
+      (xform-result
+        #(map adapt-order-book %)
+        send-result))))
 
 (defn- -orders
   [venue market-id full-market-url contract-id send-result]
@@ -121,19 +125,19 @@
     market-id
     full-market-url
     contract-id
-    #(send-result
-      (->> %
-           :orders
-           (map
-            (fn [o]
-              {:order-id (:offerId o)
-               :contract-id (:contractId o)
-               :qty (:remainingQuantity o)
-               :price (:pricePerShare o)
-               :trade-type (-> o :tradeType side-by-trade-type)
-               :created-at (:dateCreated o)
-               :cancellable? (:allowCancel o)}))
-           (into [])))))
+    (xform-result
+      #(->> %
+            :orders
+            (mapv
+             (fn [o]
+               {:order-id (:offerId o)
+                :contract-id (:contractId o)
+                :qty (:remainingQuantity o)
+                :price (:pricePerShare o)
+                :trade-type (-> o :tradeType side-by-trade-type)
+                :created-at (:dateCreated o)
+                :cancellable? (:allowCancel o)})))
+      send-result)))
 
 (defn- -contracts
   [venue market-id full-market-url send-result]
@@ -147,11 +151,11 @@
       (:auth venue)
       market-id
       full-market-url
-      #(send-result
-        (->> %
-             :contracts
-             (map adapt-contract)
-             (into []))))))
+      (xform-result
+        #(->> %
+              :contracts
+              (mapv adapt-contract))
+        send-result))))
 
 (defn- -submit-order
   [venue market-id contract-id trade-type qty price send-result]
@@ -162,8 +166,8 @@
     trade-type
     qty
     price
-    #(send-result
-      (let [order (get-in % [:order :offer])]
+    (xform-result
+      #(let [order (get-in % [:order :offer])]
         {:order-id (:offerId order)
          :mkt-id market-id
          :contract-id (:contractId order)
@@ -171,7 +175,8 @@
          :qty (:remainingQuantity order)
          :trade-type (-> order :tradeType side-by-trade-type)
          :cancellable? (not (:isProcessed order))
-         :created-at (:dateCreated order)}))))
+         :created-at (:dateCreated order)})
+      send-result)))
 
 (defn- -cancel-order
   [venue market-id order-id send-result]
@@ -234,7 +239,7 @@
       (async/go-loop []
         (let [c (async/chan 1)]
           (async/<! (async/timeout (* 5 60 1000)))
-          (api/ping (:auth @auth) #(async/>! c 1))
+          (api/ping (:auth @auth) (fn [_] (async/>! c 1)))
           (async/<! c)
           (recur)))
       (send-result

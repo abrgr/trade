@@ -224,6 +224,7 @@
                                             :markets (concat markets page-markets)})
                             (do (async/close! ch)
                                 (send-result {:markets (concat markets page-markets)}))))))]
+    (async/put! ch {:page 1 :markets []})
     (async/go-loop []
       (async/<! (async/timeout (+ 200 (rand-int 200)))) ; just to play nice...
       (let [{:keys [page markets] :as c} (async/<! ch)]
@@ -233,7 +234,7 @@
             (http-get
               url
               {:headers headers}
-              handle-resp
+              (partial handle-resp page markets)
               #(do (async/close! ch)
                    (send-result %))))
           (recur))))))
