@@ -232,9 +232,11 @@
     creds
     #(let [auth (atom %)]
       (async/go-loop []
-        (async/<! (async/timeout (* 5 60 1000)))
-        (api/ping (:auth @auth))
-        (recur))
+        (let [c (async/chan 1)]
+          (async/<! (async/timeout (* 5 60 1000)))
+          (api/ping (:auth @auth) #(async/>! c 1))
+          (async/<! c)
+          (recur)))
       (send-result
         (reify v/Venue
           (id [this] ::predictit)
