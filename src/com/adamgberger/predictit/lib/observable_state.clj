@@ -12,9 +12,9 @@
    state))
 
 (defn- with-merge-meta [obj m]
-  (if (nil? obj)
-    nil
-    (vary-meta obj #(merge % m))))
+  (if (instance? clojure.lang.IObj obj)
+    (vary-meta obj #(merge % m))
+    nil))
 
 (defn- on-result [upd logger update-path send-update state prev keypath {:keys [validator] :as cfg} result]
   (logger :info "Finished producer" {:cfg cfg :keypath keypath :result result :update upd})
@@ -80,22 +80,31 @@
                            (async/thread (throw->ret (projection args)))
                            handle-result))))
 
-(defn- register-periodicity [start-txn keypath update-pub {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0} :as periodicity}]
+(defn- register-periodicity [start-txn
+                             keypath
+                             update-pub
+                             {:keys [at-least-every-ms jitter-pct] :or {jitter-pct 0} :as periodicity}
+                             all-ancestors
+                             producer-cfg-by-keypath]
   (when (some? periodicity)
     (let [keypath-change-ch (async/chan)
           keypath-sentinel {:source ::periodicity
-                            :keypath keypath}]
-      (async/go-loop []
+                            :keypath keypath}
+          any-periodicity-ancestors (some #(-> % producer-cfg-by-keypath :periodicity some?) all-ancestors)
+          timeout-ms #(* at-least-every-ms (+ 1 (* (rand) jitter-pct)))
+          first-ms (if any-periodicity-ancestors (timeout-ms) (* 100 (+ 1 (* (rand) jitter-pct))))
+          _ (prn {:periodicity-ancestors any-periodicity-ancestors :keypath keypath :first-ms first-ms})]
+      (async/go-loop [ms first-ms]
         ; idea: loop here waiting for our keypath to produce something OR for the timeout to elapse
         ; if the timeout elapses, start a transaction for our keypath
         (let [[update port] (async/alts! [keypath-change-ch
-                                          (async/timeout (* at-least-every-ms (+ 1 (* (rand) jitter-pct))))])]
+                                          (async/timeout ms)])]
           (when (not= port keypath-change-ch)
-            (start-txn ::periodicity keypath-sentinel))))
+            (start-txn ::periodicity keypath-sentinel))
+          (recur (timeout-ms))))
       keypath-sentinel)))
 
 (defn- register-producer [logger
-                          state-atom
                           descendants
                           all-ancestors
                           start-txn
@@ -105,7 +114,8 @@
                           keypath
                           {:keys [param-keypaths
                                   transient-param-keypaths
-                                  periodicity] :as cfg}]
+                                  periodicity] :as cfg}
+                          producer-cfg-by-keypath]
   (let [update-ch (async/chan)
         transient-update-ch (async/chan)
         periodicity-ch (async/chan)
@@ -155,7 +165,7 @@
                                      (conj updates next-update))))))]
           (handle-updates logger send-update keypath cfg updates)
           (recur))))
-    (when-let [periodicity-sentinel (register-periodicity start-txn keypath pub periodicity)]
+    (when-let [periodicity-sentinel (register-periodicity start-txn keypath pub periodicity all-ancestors producer-cfg-by-keypath)]
       (async/sub pub periodicity-sentinel periodicity-ch))
     (doseq [param-keypath uniq-param-keypaths]
       (async/sub pub param-keypath update-ch))
@@ -336,7 +346,7 @@
                    (hook send-post-txn-hook-update upd)))
              (recur))))
        (doseq [[keypath cfg] producer-cfg-by-keypath]
-         (register-producer logger state descendants all-ancestors start-txn register-post-txn-hook send-update p keypath cfg))
+         (register-producer logger descendants all-ancestors start-txn register-post-txn-hook send-update p keypath cfg producer-cfg-by-keypath))
        state)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
