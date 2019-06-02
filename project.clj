@@ -2,6 +2,7 @@
   :description "Predictit Trading"
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [org.clojure/core.memoize "0.7.1"]
+                 [org.clojure/core.cache "0.7.1"]
                  [org.clojure/data.json "0.2.6"]
                  [org.clojure/core.async "0.4.490"]
                  [org.apache.commons/commons-math3 "3.6.1"]

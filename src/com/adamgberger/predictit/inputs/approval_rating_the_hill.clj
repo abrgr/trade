@@ -1,6 +1,7 @@
 (ns com.adamgberger.predictit.inputs.approval-rating-the-hill
   (:require [clojure.string :as string]
             [clojure.core.async :as async]
+            [clojure.core.cache :as cache]
             [clj-http.client :as h]
             [com.adamgberger.predictit.lib.utils :as u]
             [com.adamgberger.predictit.lib.log :as l])
@@ -10,9 +11,10 @@
 (def id ::id)
 
 (defn- async-put-once [ch val]
-  (async/go
-    (async/>! ch val)
-    (async/close! ch)))
+  (async/put!
+    ch
+    val
+    (fn [_] (async/close! ch))))
 
 (defn- async-retry
   ([out-ch pipeline tries]
@@ -90,9 +92,9 @@
   (h/get
    url
    {:async? true
-    :as :byte-array}
+    :as :stream}
    #(do (l/log :debug "The hill: got url" {:url url})
-        (async-put-once out-ch (clojure.java.io/input-stream (:body %))))
+        (async-put-once out-ch (:body %)))
    #(async-put-once out-ch (ex-info "Failed to get URL stream" (merge (l/ex-log-msg %) {:url url}) %))))
 
 (defn test-it [url]
@@ -146,7 +148,22 @@
                           (map (partial str "https://thehill.com")))]
     article-urls))
 
-(defn- sheet-url-to-approval-val [url out-ch]
+(defn- async-memoize [f]
+  (let [mem (atom (cache/lru-cache-factory {} :threshold 10))]
+    (fn [& args]
+      (let [out-ch (last args)
+            args' (butlast args)
+            mem' @mem]
+        (if-let [e (cache/has? mem' args')]
+          (async-put-once out-ch (get (cache/hit mem' args') args'))
+          (let [c (async/chan)]
+            (async/go (if-let [ret (async/<! c)]
+                        (do (swap! mem cache/miss args' ret)
+                            (async-put-once out-ch ret))
+                        (async/close! out-ch)))
+            (apply f (concat args' [c]))))))))
+
+(defn- -sheet-url-to-approval-val [url out-ch]
   (async-retry
    out-ch
    (fn [ch]
@@ -155,6 +172,8 @@
           (async-thread (async-wrap-error current-from-sheet))
           (#(async/pipe % ch))))
    0))
+
+(def ^:private sheet-url-to-approval-val (async-memoize -sheet-url-to-approval-val))
 
 (defn get-current [cb]
   (let [html-chan (async/chan)
@@ -171,8 +190,8 @@
          (async-thread (async-wrap-error article-html))
          (async-thread (async-wrap-error article-html-to-sheet-url))
          (async-thread (async-wrap-error sheet-url-to-approval-val))
-         (async/take 1)
          (u/tap-timeout 5000 #(cb nil))
+         (async/take 1)
          (async-thread (async-wrap-error #(do (cb %1) (async/close! %2))))
          (async-thread #(do (l/log :error "Error in the hill approval rating" (l/ex-log-msg %1))
                             (async/close! %2)
