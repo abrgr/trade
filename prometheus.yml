@@ -16,7 +16,6 @@ rule_files:
 scrape_configs:
   # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
   - job_name: 'trader'
-
-    #static_configs:
-      #- targets:
-          #- "trader:9090"
+    static_configs:
+      - targets:
+        - "trader:8080"

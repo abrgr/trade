@@ -11,6 +11,8 @@
                  [clj-http "3.9.1"]
                  [hickory "0.7.1"]
                  [org.clojure/data.csv "0.1.4"]
+                 [iapetos "0.1.6"]
+                 [io.prometheus/simpleclient_hotspot "0.0.14"]
                  [de.xypron.jcobyla/jcobyla "1.3"]]
   :plugins [[jonase/eastwood "0.3.4"]
             [lein-cljfmt "0.6.4"]]

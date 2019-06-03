@@ -1,5 +1,8 @@
 (ns com.adamgberger.predictit.main
   (:require [clojure.core.async :as async]
+            [iapetos.core :as prometheus]
+            [iapetos.collector.jvm :as jvm]
+            [iapetos.standalone :as standalone]
             [com.adamgberger.predictit.lib.utils :as utils]
             [com.adamgberger.predictit.lib.log :as l]
             [com.adamgberger.predictit.lib.observable-state :as obs]
@@ -88,6 +91,13 @@
         twice-per-minute 30000
         once-per-minute (* 2 twice-per-minute)
         once-per-10-minutes (* once-per-minute 10)
+        metrics (-> (prometheus/collector-registry)
+                    (jvm/initialize)
+                    (prometheus/register
+                      (prometheus/histogram :txn-duration-ms {:labels [:origin]})
+                      (prometheus/counter :txn-count {:labels [:origin]})
+                      (prometheus/histogram :producer-duration-ms {:labels [:key :success :valid]})
+                      (prometheus/counter :producer-count {:labels [:key :success :valid]})))
         obs-state (obs/observable-state
                     (fn [send-result]
                       (pv/make-venue
@@ -391,7 +401,9 @@
                                       (exec/execute-orders venue immediately-executable-trades send-result))
                       :param-keypaths [:executor/immediately-executable-trades
                                        :venue-predictit/venue]}}
-                    :logger l/log)]))
+                    :logger l/log
+                    :metrics metrics)]
+    (standalone/metrics-server metrics {:port 8080})))
 
 (defn -main
   [& args]
