@@ -31,14 +31,12 @@
                                  v)))))
 
 (defn to-decimal [n]
-  (if (nil? n)
-    nil
-    (bigdec n)))
+  (some-> n bigdec))
 
 (defn to-price [n]
-  (-> n
-      to-decimal
-      (.setScale 2 java.math.RoundingMode/HALF_UP)))
+  (some-> n
+          to-decimal
+          (.setScale 2 java.math.RoundingMode/HALF_UP)))
 
 (defn parse-ext-iso-date
   "E.x. 1986-11-22"
