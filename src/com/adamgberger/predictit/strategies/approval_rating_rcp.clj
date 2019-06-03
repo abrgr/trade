@@ -110,7 +110,6 @@
        (into {})))
 
 (defn calculate-prob-dists [rcp-estimate tradable-mkts]
-  (l/log :info "Updating RCP probabilities")
   (let [{:keys [dists-by-day]} rcp-estimate]
     (when (and (some? tradable-mkts)
                (some? dists-by-day))
