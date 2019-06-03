@@ -144,18 +144,23 @@
                                                   venue
                                                   market-id
                                                   market-url
-                                                  #(do (async/put! c (assoc % :mkt-id market-id))
-                                                       (async/close! c)))
+                                                  #(utils/async-put-once
+                                                     c
+                                                     (if (instance? Throwable %)
+                                                       %
+                                                       (mapv (fn [contract] (assoc contract :mkt-id market-id)) %))))
                                                 c)))
                                            async/merge
                                            (async/into [])
                                            (async-transform-single
                                              #(reduce
                                                 (fn [by-mkt-id {:keys [mkt-id contract-id] :as contract}]
-                                                  (assoc-in
-                                                    by-mkt-id
-                                                    [mkt-id contract-id]
-                                                    contract))
+                                                  (if (instance? Throwable contract)
+                                                    (reduced contract)
+                                                    (assoc-in
+                                                      by-mkt-id
+                                                      [mkt-id contract-id]
+                                                      contract)))
                                                 {}
                                                 %)
                                              send-result)))
@@ -174,19 +179,25 @@
                                                   mkt-id
                                                   market-url
                                                   contract-id
-                                                  #(do (async/put! c {:mkt-id mkt-id
-                                                                      :contract-id contract-id
-                                                                      :order-book %})
-                                                       (async/close! c))))))
+                                                  #(utils/async-put-once
+                                                     c
+                                                     (if (instance? Throwable %)
+                                                       %
+                                                       {:mkt-id mkt-id
+                                                        :contract-id contract-id
+                                                        :order-book %})))
+                                                c)))
                                            async/merge
                                            (async/into [])
                                            (async-transform-single
                                              #(reduce
-                                                (fn [by-mkt-by-contract {:keys [mkt-id contract-id order-book]}]
-                                                  (assoc-in
-                                                    by-mkt-by-contract
-                                                    [mkt-id contract-id]
-                                                    order-book))
+                                                (fn [by-mkt-by-contract {:keys [mkt-id contract-id order-book] :as maybe-err}]
+                                                  (if (instance? Throwable maybe-err)
+                                                    (reduced maybe-err)
+                                                    (assoc-in
+                                                      by-mkt-by-contract
+                                                      [mkt-id contract-id]
+                                                      order-book)))
                                                 {}
                                                 %)
                                              send-result)))
@@ -216,7 +227,8 @@
                                                     #(do (async/put! c {:mkt-id market-id
                                                                         :contract-id contract-id
                                                                         :orders %})
-                                                         (async/close! c))))))
+                                                         (async/close! c)))
+                                                  c)))
                                              async/merge
                                              (async/into [])
                                              (async-transform-single
