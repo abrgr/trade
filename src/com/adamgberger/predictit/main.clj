@@ -162,7 +162,7 @@
                                                       [mkt-id contract-id]
                                                       contract)))
                                                 {}
-                                                %)
+                                                (flatten %))
                                              send-result)))
                        :param-keypaths [:venue-predictit/venue :venue-predictit/monitored-mkts]}
                      :venue-predictit/order-books
