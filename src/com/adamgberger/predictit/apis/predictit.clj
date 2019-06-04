@@ -355,9 +355,10 @@
     (http-get
       url
       {:headers headers}
-      #(if (-> % :body nil?)
-        (ex-info "Bad order book response" {:resp %})
-        {:order-book (merge (resp-from-json % value-fns) {:contract-id contract-id})})
+      #(send-result
+         (if (-> % :body nil?)
+           (ex-info "Bad order book response" {:resp %})
+           {:order-book (merge (resp-from-json % value-fns) {:contract-id contract-id})}))
       send-result)))
 
 (defn get-positions
