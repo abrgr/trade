@@ -75,7 +75,8 @@
 (defn- -order-book
   [venue market-id full-market-url contract-id send-result]
   (letfn [(adapt-order-book [{:keys [order-book]}]
-            {:yes {:buy (->> (:yesOrders order-book)
+            {:yes {:buy (->> order-book
+                             :yesOrders
                              (map
                               (fn [{:keys [contractId costPerShareYes quantity]}]
                                 {:contract-id contractId
@@ -83,7 +84,8 @@
                                  :qty quantity}))
                              (sort-by :price)
                              (into []))
-                   :sell (->> (:noOrders order-book)
+                   :sell (->> order-book
+                              :noOrders
                               (map
                                (fn [{:keys [contractId costPerShareYes quantity]}]
                                  {:contract-id contractId
@@ -92,7 +94,8 @@
                               (sort-by :price)
                               reverse
                               (into []))}
-             :no {:buy (->> (:noOrders order-book)
+             :no {:buy (->> order-book
+                            :noOrders
                             (map
                              (fn [{:keys [contractId costPerShareNo quantity]}]
                                {:contract-id contractId
@@ -100,7 +103,8 @@
                                 :qty quantity}))
                             (sort-by :price)
                             (into []))
-                  :sell (->> (:yesOrders order-book)
+                  :sell (->> order-book
+                             :yesOrders
                              (map
                               (fn [{:keys [contractId costPerShareNo quantity]}]
                                 {:contract-id contractId
@@ -115,7 +119,7 @@
       full-market-url
       contract-id
       (xform-result
-        #(map adapt-order-book %)
+        adapt-order-book
         send-result))))
 
 (defn- -orders
