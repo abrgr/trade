@@ -259,7 +259,7 @@
             [v p] (async/alts! [in-ch timeout-ch])]
         (if (= p timeout-ch)
           (f)
-          (async/>! c v))
+          (when-not (nil? v) (async/>! c v)))
         (async/close! c)))
     c))
 
