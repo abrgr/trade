@@ -266,7 +266,7 @@
                       {:io-producer (fn [_ send-result]
                                         (rcp-input/get-hist send-result))
                        :periodicity {:at-least-every-ms once-per-10-minutes
-                                    :jitter-pct 0.2}
+                                     :jitter-pct 0.2}
                        :param-keypaths []}
                      :inputs/rasmussen-current ; TODO: sometimes rasmussen doesn't return.  move to validator
                       {:io-producer (fn [_ send-result]
@@ -285,6 +285,7 @@
                                         (the-hill-input/get-current send-result))
                        :periodicity {:at-least-every-ms once-per-minute
                                     :jitter-pct 0.2}
+                       :timeout 20000
                        :param-keypaths []}
                      :estimators/approval-rcp
                       {:compute-producer (fn [{:keys [prev]

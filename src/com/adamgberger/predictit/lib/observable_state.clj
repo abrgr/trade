@@ -15,7 +15,7 @@
 (defn- with-merge-meta [obj m]
   (if (instance? clojure.lang.IObj obj)
     (vary-meta obj #(merge % m))
-    nil))
+    obj))
 
 (defn- on-result [metrics start-time upd logger update-path send-update state prev keypath {:keys [validator] :as cfg} result]
   (logger :info "Finished producer" {:cfg cfg :keypath keypath :result result :update upd})
@@ -55,6 +55,11 @@
      (catch Exception e#
        e#)))
 
+(defn- safe-put! [ch v]
+  (if (nil? v)
+    (async/close! ch)
+    (async/put! ch v)))
+
 (defn- handle-updates [logger
                        metrics
                        send-update
@@ -63,7 +68,8 @@
                                transient-param-keypaths
                                io-producer
                                compute-producer
-                               projection] :as cfg}
+                               projection
+                               timeout-ms] :as cfg}
                        updates]
   (let [new-states (map :new-state updates)
         new-state (apply merge new-states)
@@ -75,21 +81,30 @@
         update-path (if (= (count updates) 1)
                       (-> updates first :update-path)
                       (mapv :update-path updates)) ; TODO: this seems wrong
-        handle-result (partial on-result metrics (java.time.Instant/now) (last updates) logger update-path send-update new-state prev keypath cfg)]
+        handle-result (partial on-result metrics (java.time.Instant/now) (last updates) logger update-path send-update new-state prev keypath cfg)
+        result-ch (async/chan)]
     (logger :info "Starting producer" {:cfg cfg :keypath keypath :args args :updates updates})
+
+    (async/go
+      (let [timeout-ch (async/timeout (or timeout-ms 60000))
+            [v p] (async/alts! [result-ch timeout-ch])]
+        (if (= p timeout-ch)
+          (do (logger :warn "Producer timeout" {:cfg cfg :keypath keypath :args args :updates updates})
+              (handle-result (ex-info "Timeout" {:anomaly :timeout :keypath keypath})))
+          (handle-result v))))
+
     (cond
-      ; TODO: timeouts
       (some? io-producer) (async/go
                             (try
-                              (io-producer args handle-result)
+                              (io-producer args #(safe-put! result-ch %))
                               (catch Exception e
-                                (handle-result e))))
+                                (safe-put! result-ch e))))
       (some? compute-producer) (async/take!
                                  (async/thread (throw->ret (compute-producer args)))
-                                 handle-result)
+                                 #(safe-put! result-ch %))
       (some? projection) (async/take!
                            (async/thread (throw->ret (projection args)))
-                           handle-result))))
+                           #(safe-put! result-ch %)))))
 
 (defn- register-periodicity [start-txn
                              keypath
