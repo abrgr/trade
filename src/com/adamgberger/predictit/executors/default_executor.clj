@@ -218,7 +218,8 @@
               order-sell-old-pos]
              flatten
              (filter some?)
-             (into [])))))))
+             (into [])))))
+       (into [])))
 
 (defmulti submit-for-execution (fn [venue {:keys [mkt-id trade-type]} send-result]
                                  (if (= :cancel trade-type)
