@@ -362,7 +362,8 @@
                             state))))
                   {:trades []
                    :bp (- bal total-order-dollars)})
-                 :trades))))))
+                 :trades))))
+       (into [])))
 
 (defn execute-orders [venue orders-to-submit send-result]
   (->> (async/to-chan orders-to-submit)
