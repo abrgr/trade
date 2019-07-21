@@ -353,7 +353,7 @@
                     (let [outstanding-orders-by-contract-id (get-orders-by-contract-id orders mkt-id)
                           mkt (get mkts-by-id mkt-id)
                           contracts-by-id (get contracts mkt-id)
-                          {:keys [permitted? buying-power]} (trade-policy bp contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
+                          {:keys [permitted? buying-power]} (trade-policy bp mkt contracts-by-id pos-by-contract-id outstanding-orders-by-contract-id trade)]
                       (if permitted?
                         {:trades (conj trades trade)
                          :bp buying-power}
