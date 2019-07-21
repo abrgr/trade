@@ -402,8 +402,7 @@
                        :param-keypaths [:strategy-rcp/desired-trades]}
                      :executor/immediately-executable-trades
                       {:compute-producer (fn executor-immediately-executable-trades
-                                             [{{:strategy-rcp/keys [desired-trades]
-                                                :executor/keys [outstanding-orders]
+                                             [{{:executor/keys [desired-trades outstanding-orders]
                                                 :venue-predictit/keys [bal mkts-by-id pos-by-contract-id contracts]} :partial-state}]
                                           (exec/generate-immediately-executable-trades desired-trades outstanding-orders bal mkts-by-id pos-by-contract-id contracts))
                        :param-keypaths [:executor/desired-trades
