@@ -18,7 +18,7 @@
     obj))
 
 (defn- on-result [metrics start-time upd logger update-path send-update state prev keypath {:keys [validator] :as cfg} state-update result]
-  (logger :info "Finished producer" {:cfg cfg :keypath keypath :result result :update upd})
+  (logger :info "Finished producer" {:keypath keypath :result result :txn-id (get upd :txn-id)})
   (let [exception? (instance? Throwable result)
         invalid? (and (some? validator)
                       (validator result))
@@ -83,7 +83,7 @@
                       (mapv :update-path updates)) ; TODO: this seems wrong
         handle-result (partial on-result metrics (java.time.Instant/now) (last updates) logger update-path send-update state prev keypath cfg (apply merge nil (map :state-update updates)))
         result-ch (async/chan)]
-    (logger :info "Starting producer" {:cfg cfg :keypath keypath :args args :updates updates})
+    (logger :info "Starting producer" {:keypath keypath :args args :txn-id (-> updates first (get :txn-id)) :update-path update-path})
 
     (async/go
       (let [timeout-ch (async/timeout (or timeout-ms 60000))
@@ -118,8 +118,7 @@
                             :keypath keypath}
           any-periodicity-ancestors (some #(-> % producer-cfg-by-keypath :periodicity some?) all-ancestors)
           timeout-ms #(* at-least-every-ms (+ 1 (* (rand) jitter-pct)))
-          first-ms (if any-periodicity-ancestors (timeout-ms) (* 100 (+ 1 (* (rand) jitter-pct))))
-          _ (prn {:periodicity-ancestors any-periodicity-ancestors :keypath keypath :first-ms first-ms})]
+          first-ms (if any-periodicity-ancestors (timeout-ms) (* 100 (+ 1 (* (rand) jitter-pct))))]
       (async/go-loop [ms first-ms]
         ; idea: loop here waiting for our keypath to produce something OR for the timeout to elapse
         ; if the timeout elapses, start a transaction for our keypath
@@ -164,6 +163,7 @@
       (when-let [upd (async/<! update-ch)]
         ; based on the origin-keypath in upd, we find all of the params of ours that we expect to be fired.
         ; we wait for all of them before running
+        ; TODO: need to ensure that any projections we depend on also run before us
         (let [{updated-keypath :keypath :keys [txn-id origin-keypath]} upd
               orig-descendants (descendants origin-keypath)
               ; note: required-params is empty when (= updated-keypath keypath) by non-cyclicality
@@ -366,7 +366,9 @@
                    (if (not (and (= end-txn-id txn-id)
                                  (= end-action :end)))
                      (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
-                     (swap! state #(merge % (apply dissoc state-update projections))))))))
+                     ; TODO: until we ensure that projections are run before dependent producers, need to store in state
+                     ;(swap! state #(merge % (apply dissoc state-update projections))))))))
+                     (swap! state #(merge % state-update)))))))
            (recur)))
        (async/go-loop []
          (when-let [upd (async/<! post-txn-hook-chan)]
