@@ -17,7 +17,7 @@
     (vary-meta obj #(merge % m))
     obj))
 
-(defn- on-result [metrics start-time upd logger update-path send-update state prev keypath {:keys [validator] :as cfg} result]
+(defn- on-result [metrics start-time upd logger update-path send-update state prev keypath {:keys [validator] :as cfg} state-update result]
   (logger :info "Finished producer" {:cfg cfg :keypath keypath :result result :update upd})
   (let [exception? (instance? Throwable result)
         invalid? (and (some? validator)
@@ -30,7 +30,7 @@
                                                    ::prev (if (nil? prev)
                                                             nil
                                                             (vary-meta prev #(dissoc % ::prev)))})
-        new-state (assoc state keypath new-val)
+        state-update' (merge state-update {keypath new-val})
         upd' (assoc upd :update-path update-path)
         metric-labels {:key keypath
                        :success (not exception?)
@@ -47,7 +47,7 @@
     (when invalid?
       (logger :error "Invalid producer result" {:keypath keypath
                                                 :result result}))
-    (send-update upd' keypath new-state)))
+    (send-update upd' keypath state-update')))
 
 (defmacro throw->ret [& body]
   `(try
@@ -71,17 +71,17 @@
                                projection
                                timeout-ms] :as cfg}
                        updates]
-  (let [new-states (map :new-state updates)
-        new-state (apply merge new-states)
-        partial-state (select-keys new-state (concat param-keypaths transient-param-keypaths))
-        prev (keypath new-state)
+  (let [state-updates (map :state-update updates)
+        state (apply merge (-> updates first :orig-state) state-updates)
+        partial-state (select-keys state (concat param-keypaths transient-param-keypaths))
+        prev (keypath state)
         args {:partial-state partial-state
               :prev prev
               :key keypath}
         update-path (if (= (count updates) 1)
                       (-> updates first :update-path)
                       (mapv :update-path updates)) ; TODO: this seems wrong
-        handle-result (partial on-result metrics (java.time.Instant/now) (last updates) logger update-path send-update new-state prev keypath cfg)
+        handle-result (partial on-result metrics (java.time.Instant/now) (last updates) logger update-path send-update state prev keypath cfg (apply merge nil (map :state-update updates)))
         result-ch (async/chan)]
     (logger :info "Starting producer" {:cfg cfg :keypath keypath :args args :updates updates})
 
@@ -334,22 +334,23 @@
                                                            :origin-keypath keypath
                                                            :keypath keypath
                                                            :txn-source source})))
-           make-update (fn [{:keys [update-path txn-id txn-source origin-keypath]} keypath new-state]
+           make-update (fn [{:keys [update-path txn-id txn-source origin-keypath orig-state]} keypath state-update]
                           {:update-path (conj update-path keypath)
                            :txn-id txn-id
                            :txn-source txn-source
                            :origin-keypath origin-keypath
                            :keypath keypath
-                           :new-state new-state})
-           send-post-txn-hook-update (fn [upd keypath new-state]
-                                      (async/put! post-txn-hook-chan (make-update upd keypath new-state)))
+                           :orig-state orig-state
+                           :state-update state-update})
+           send-post-txn-hook-update (fn [upd keypath state-update]
+                                      (async/put! post-txn-hook-chan (make-update upd keypath state-update)))
            register-post-txn-hook (fn [{:keys [txn-id]} f]
                                     ; TODO: check current txn-id
                                     (swap! post-txn-hooks (partial concat [f])))
-           send-update (fn [upd keypath new-state]
+           send-update (fn [upd keypath state-update]
                          (async/put!
                            (if (terminal-node? keypath) post-txn-hook-chan updates-chan)
-                           (make-update upd keypath new-state)))]
+                           (make-update upd keypath state-update)))]
        (async/go-loop []
          (when-let [{:keys [txn-id action origin-keypath] :as txn} (async/<! start-txn-chan)]
            (let [start-time (java.time.Instant/now)]
@@ -357,15 +358,15 @@
              (if (not= action :start)
                (logger :error "Expected start transaction" {:txn txn})
                (do
-                 (async/>! updates-chan (make-update txn (:keypath txn) @state))
-                 (when-let [{:keys [new-state] end-txn-id :txn-id end-action :action :as end-txn} (async/<! end-txn-chan)]
+                 (async/>! updates-chan (make-update (assoc txn :orig-state @state) (:keypath txn) nil))
+                 (when-let [{:keys [state-update] end-txn-id :txn-id end-action :action :as end-txn} (async/<! end-txn-chan)]
                    (logger :info "Ending txn" {:txn end-txn})
                    (prometheus/observe (metrics :txn-duration-ms {:origin origin-keypath}) (-> start-time (java.time.Duration/between (java.time.Instant/now)) .toMillis))
                    (prometheus/inc (metrics :txn-count {:origin origin-keypath}))
                    (if (not (and (= end-txn-id txn-id)
                                  (= end-action :end)))
                      (logger :error "Expected end transaction" {:start-txn txn :end-txn end-txn})
-                     (swap! state #(merge % (apply dissoc new-state projections))))))))
+                     (swap! state #(merge % (apply dissoc state-update projections))))))))
            (recur)))
        (async/go-loop []
          (when-let [upd (async/<! post-txn-hook-chan)]
