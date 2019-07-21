@@ -266,4 +266,4 @@
 (defn index-by [f coll]
   (->> (group-by f coll)
        (map #(vector (first %) (-> % second first)))
-       (into #{})))
+       (into {})))
