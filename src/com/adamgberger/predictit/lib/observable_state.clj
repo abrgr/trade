@@ -153,7 +153,7 @@
                                  (into #{}))]
     (async/go-loop []
       (when-let [upd (async/<! transient-update-ch)]
-        (register-post-txn-hook #(handle-updates logger metrics %1 keypath cfg [%2]))
+        (register-post-txn-hook upd #(handle-updates logger metrics %1 keypath cfg [%2]))
         (recur)))
     (async/go-loop []
       (when-let [{:keys [txn-source] :as upd} (async/<! periodicity-ch)]
@@ -302,6 +302,7 @@
            start-txn-chan (async/chan)
            end-txn-chan (async/chan)
            post-txn-hook-chan (async/chan)
+           post-txn-hook-changes-chan (async/chan)
            post-txn-hooks (atom [])
            p (async/pub updates-chan :keypath)
            all-ancestors (ancestors-for-all (->> producer-cfg-by-keypath
@@ -309,19 +310,23 @@
                                                         {:task keypath
                                                          :depends-on param-keypaths}))
                                                  (into {})))
-           next-nodes (->> producer-cfg-by-keypath
-                           (reduce
-                            (fn [descendants [keypath {:keys [param-keypaths]}]]
-                              (->> param-keypaths
-                                   (reduce
-                                    (fn [descs param]
-                                      (update descs param #(conj %1 keypath)))
-                                    descendants)))
-                            {}))
+           make-nexts (fn [k]
+                        (->> producer-cfg-by-keypath
+                             (reduce
+                              (fn [descendants [keypath cfg]]
+                                (->> cfg
+                                     k
+                                     (reduce
+                                      (fn [descs param]
+                                        (update descs param #(conj %1 keypath)))
+                                      descendants)))
+                              {})))
+           next-nodes (make-nexts :param-keypaths)
+           transient-next-nodes (make-nexts :transient-param-keypaths)
            descendants (transitive-closure next-nodes)
            terminal-node? (->> producer-cfg-by-keypath
                                keys
-                               (filter #(= (count (next-nodes %)) 0))
+                               (filter #(empty? (next-nodes %)))
                                (into #{}))
            projections (->> producer-cfg-by-keypath
                             keys
@@ -346,11 +351,20 @@
                                       (async/put! post-txn-hook-chan (make-update upd keypath state-update)))
            register-post-txn-hook (fn [{:keys [txn-id]} f]
                                     ; TODO: check current txn-id
-                                    (swap! post-txn-hooks (partial concat [f])))
+                                    (swap! post-txn-hooks conj f))
            send-update (fn [upd keypath state-update]
-                         (async/put!
-                           (if (terminal-node? keypath) post-txn-hook-chan updates-chan)
-                           (make-update upd keypath state-update)))]
+                         (let [new-upd (make-update upd keypath state-update)
+                               transients-to-wait-for (transient-next-nodes keypath)]
+                           (cond
+                             ; if we are a terminal node AND we have transients that react to us, we wait for them to register their post-txn-hooks
+                             (and (terminal-node? keypath)
+                                  (not-empty transients-to-wait-for)) (async/go (async/>! updates-chan new-upd)
+                                                                                (doseq [_ transients-to-wait-for]
+                                                                                  (async/<! post-txn-hook-changes-chan))
+                                                                                (async/>! post-txn-hook-chan new-upd))
+                             (terminal-node? keypath) (async/put! post-txn-hook-chan new-upd)
+                             :else (async/put! updates-chan new-upd))))]
+       (add-watch post-txn-hooks :post-txn-hooks-changes (fn [k _ _ _] (async/put! post-txn-hook-changes-chan k)))
        (async/go-loop []
          (when-let [{:keys [txn-id action origin-keypath] :as txn} (async/<! start-txn-chan)]
            (let [start-time (java.time.Instant/now)]
