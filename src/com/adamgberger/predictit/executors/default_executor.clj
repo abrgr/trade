@@ -375,7 +375,7 @@
        (#(async/take! % send-result))))
 
 (defn update-orders [prev-orders orders submitted-orders]
-  (let [orders-changed (-> orders meta :prev (not= orders))
+  (let [orders-changed (-> orders meta :com.adamgberger.predictit.lib.observable-state/prev (not= orders))
         to-remove (->> submitted-orders
                        (map :cancelled)
                        (filter some?)
@@ -411,4 +411,5 @@
         prev-orders
         (->> submitted-orders
              (mapcat vals)
-             (map :mkt-id))))))
+             (map :mkt-id)
+             (into #{}))))))
