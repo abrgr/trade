@@ -303,6 +303,7 @@
            end-txn-chan (async/chan)
            post-txn-hook-chan (async/chan)
            post-txn-hook-changes-chan (async/chan)
+           post-txn-hook-changes-pub (async/pub post-txn-hook-changes-chan (constantly :all))
            post-txn-hooks (atom [])
            p (async/pub updates-chan :keypath)
            all-ancestors (ancestors-for-all (->> producer-cfg-by-keypath
@@ -358,10 +359,14 @@
                            (cond
                              ; if we are a terminal node AND we have transients that react to us, we wait for them to register their post-txn-hooks
                              (and (terminal-node? keypath)
-                                  (not-empty transients-to-wait-for)) (async/go (async/>! updates-chan new-upd)
-                                                                                (doseq [_ transients-to-wait-for]
-                                                                                  (async/<! post-txn-hook-changes-chan))
-                                                                                (async/>! post-txn-hook-chan new-upd))
+                                  (not-empty transients-to-wait-for)) (let [c (async/chan)]
+                                                                        (async/sub post-txn-hook-changes-pub :all c)
+                                                                        (async/go
+                                                                          (async/>! updates-chan new-upd)
+                                                                          (doseq [_ transients-to-wait-for]
+                                                                            (async/<! c))
+                                                                          (async/unsub post-txn-hook-changes-pub :all c)
+                                                                          (async/>! post-txn-hook-chan new-upd)))
                              (terminal-node? keypath) (async/put! post-txn-hook-chan new-upd)
                              :else (async/put! updates-chan new-upd))))]
        (add-watch post-txn-hooks :post-txn-hooks-changes (fn [k _ _ _] (async/put! post-txn-hook-changes-chan k)))
@@ -390,8 +395,8 @@
                  hook (first hooks)]
              (if (empty? hooks)
                (async/>! end-txn-chan (assoc upd :action :end)) ; no more hooks, end the txn
-               (do (swap! post-txn-hooks next)
-                   (hook send-post-txn-hook-update upd)))
+               (do (swap! post-txn-hooks (comp vec next))
+                   (hook send-post-txn-hook-update upd))) ; TODO: weird that this assumes a call to send-post-txn-hook-update
              (recur))))
        (doseq [[keypath cfg] producer-cfg-by-keypath]
          (register-producer logger metrics descendants all-ancestors start-txn register-post-txn-hook send-update p keypath cfg producer-cfg-by-keypath))
