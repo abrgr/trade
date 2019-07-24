@@ -387,7 +387,10 @@
                                         :venue-predictit/pos
                                         :venue-predictit/bal
                                         :executor/outstanding-orders
-                                        :venue-predictit/order-books]}
+                                        :venue-predictit/order-books]
+                       ; TODO: don't really want this periodic; just want immediately-executable-trades executable
+                       :periodicity {:at-least-every-ms twice-per-minute
+                                     :jitter-pct 0.2}}
                      :executor/outstanding-orders
                       {:compute-producer (fn executor-outstanding-orders
                                              [{{:venue-predictit/keys [orders]
@@ -411,8 +414,10 @@
                                         :venue-predictit/contracts
                                         :executor/outstanding-orders
                                         :venue-predictit/mkts-by-id]
-                       :periodicity {:at-least-every-ms twice-per-minute
-                                     :jitter-pct 0.2}}
+                       ; TODO: can't make this periodic until desired-trades is actually a projection
+                       ;:periodicity {:at-least-every-ms twice-per-minute
+                       ;              :jitter-pct 0.2}}
+                       }
                      :executor/executions
                       {:io-producer (fn exeuctor-executions
                                         [{{:executor/keys [immediately-executable-trades]
