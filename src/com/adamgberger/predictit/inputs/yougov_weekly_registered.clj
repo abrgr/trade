@@ -17,8 +17,8 @@
         dates (u/parse-human-date-range-within intro)
         job-approval-idx (clojure.string/last-index-of s "Trump Job Approval")
         question-idx (clojure.string/index-of s "Do you approve or disapprove of the way Donald Trump is handling his job as President?" job-approval-idx)
-        header-1-idx (clojure.string/index-of s "Registered voters" question-idx)
-        header-2-idx (clojure.string/index-of s "Total Registered" header-1-idx)
+        header-1-idx (clojure.string/index-of s "Registered" question-idx)
+        header-2-idx (clojure.string/index-of s "Total" header-1-idx)
         strongly-approve-str "Strongly approve"
         after-strongly-approve-idx (+ (count strongly-approve-str)
                                       (clojure.string/index-of s strongly-approve-str header-2-idx))
