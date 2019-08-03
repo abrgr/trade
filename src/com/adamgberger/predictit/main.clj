@@ -74,12 +74,13 @@
        (reduce + 0.0)))
 
 (defn- strat-bankroll [bal pos allocation mkt-ids]
-  (let [relevant-pos (filter #(mkt-ids (:market-id %)) pos)
-        strat-pos-investment (orig-investment relevant-pos)
-        all-pos-investment (orig-investment pos)]
-    (if (and (some? bal)
+  (when (and (some? mkt-ids)
+             (some? bal)
              (some? pos)
              (some? allocation))
+    (let [relevant-pos (filter #(mkt-ids (:market-id %)) pos)
+          strat-pos-investment (orig-investment relevant-pos)
+          all-pos-investment (orig-investment pos)]
       (let [total-val (+ all-pos-investment bal)
             desired (* total-val allocation)]
         {:desired desired
@@ -361,7 +362,8 @@
                                     :jitter-pct 0.2}}
                      :strategy-rcp/mkt-ids
                       {:projection (fn strategy-rcp-mkt-ids [{{:strategy-rcp/keys [mkts]} :partial-state}]
-                                      (->> mkts (map :market-id) (into #{})))}
+                                      (->> mkts (map :market-id) (into #{})))
+                       :param-keypaths [:strategy-rcp/mkts]}
                      :strategy-rcp/bankroll
                       {:compute-producer (fn strategy-rcp-bankroll
                                              [{{:keys [cfg]
