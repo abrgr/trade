@@ -216,7 +216,8 @@
                                                   (fn [{:keys [contract-id]}]
                                                     {:contract-id contract-id
                                                      :market-id market-id
-                                                     :market-url (get-in mkts-by-id [market-id :market-url])}))))
+                                                     :market-url (get-in mkts-by-id [market-id :market-url])})
+                                                  contracts)))
                                              (map
                                               (fn orders-for-contract [{:keys [contract-id market-id market-url]}]
                                                 (let [c (async/chan)]
