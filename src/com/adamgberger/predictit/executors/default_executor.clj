@@ -234,12 +234,13 @@
     order-id
     (utils/cb-wrap-error
       send-result
-      #(send-result {:cancelled {:mkt-id mkt-id
-                                 :contract-id contract-id
-                                 :order-id order-id
-                                 :trade-type :cancel
-                                 :qty qty
-                                 :price price}}))))
+      (fn send-result [_]
+        {:cancelled {:mkt-id mkt-id
+                     :contract-id contract-id
+                     :order-id order-id
+                     :trade-type :cancel
+                     :qty qty
+                     :price price}}))))
 (defmethod submit-for-execution :trade
   [venue {:keys [mkt-id contract-id trade-type qty price]} send-result]
   (l/log :info "Submitting order" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
@@ -375,7 +376,14 @@
        (#(async/take! % send-result))))
 
 (defn update-orders [prev-orders orders submitted-orders]
+  ; TODO: we shouldn't know we're running in observable-state
   (let [orders-changed (-> orders meta :com.adamgberger.predictit.lib.observable-state/prev (not= orders))
+        existing-order? (->> prev-orders
+                             vals
+                             (map vals)
+                             (mapcat orders)
+                             (map :order-id)
+                             (into #{}))
         to-remove (->> submitted-orders
                        (map :cancelled)
                        (filter some?)
@@ -384,7 +392,7 @@
                        (into {}))
         to-add (->> submitted-orders
                     (map :submitted)
-                    (filter some?)
+                    (filter #(and (some? %) (-> % :order-id existing-order?)))
                     (group-by :contract-id))]
     (if orders-changed
       orders
