@@ -380,7 +380,7 @@
   (let [orders-changed (-> orders meta :com.adamgberger.predictit.lib.observable-state/prev (not= orders))
         existing-order? (->> prev-orders
                              vals
-                             (map vals)
+                             (mapcat vals)
                              (mapcat orders)
                              (map :order-id)
                              (into #{}))
@@ -392,7 +392,7 @@
                        (into {}))
         to-add (->> submitted-orders
                     (map :submitted)
-                    (filter #(and (some? %) (-> % :order-id existing-order?)))
+                    (filter #(and (some? %) (-> % :order-id existing-order? not)))
                     (group-by :contract-id))]
     (if orders-changed
       orders
