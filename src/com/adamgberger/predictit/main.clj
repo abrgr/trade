@@ -207,9 +207,14 @@
                        :param-keypaths [:venue-predictit/venue :venue-predictit/contracts :venue-predictit/mkts-by-id]}
                      :venue-predictit/orders
                       {:io-producer (fn predictit-orders [{:keys [prev]
-                                          {:venue-predictit/keys [venue pos mkts-by-id]} :partial-state}
+                                                          {:venue-predictit/keys [venue pos mkts-by-id contracts]
+                                                           rcp-mkts :strategy-rcp/mkts} :partial-state}
                                          send-result]
                                         (->> (pos-needing-orders pos prev)
+                                             (concat (map (fn [mkt] (assoc mkt :contracts (->> (:market-id mkt) (get contracts) vals))) rcp-mkts))
+                                             (group-by :market-id)
+                                             vals
+                                             (map first)
                                              (mapcat
                                               (fn [{:keys [market-id contracts]}]
                                                 (map
@@ -237,17 +242,23 @@
                                               (fn [orders]
                                                 (reduce
                                                   (fn [orders-by-mkt-by-contract {:keys [mkt-id contract-id orders]}]
-                                                    (assoc-in
-                                                      orders-by-mkt-by-contract
-                                                      [mkt-id contract-id]
-                                                      {:valid? true
-                                                      :orders orders}))
+                                                    (if (not-empty orders)
+                                                      (assoc-in
+                                                        orders-by-mkt-by-contract
+                                                        [mkt-id contract-id]
+                                                        {:valid? true
+                                                         :orders orders})
+                                                      orders-by-mkt-by-contract))
                                                   {}
                                                   orders))
                                               send-result)))
                        :periodicity {:at-least-every-ms once-per-10-minutes
                                     :jitter-pct 0.2}
-                       :param-keypaths [:venue-predictit/venue :venue-predictit/pos :venue-predictit/mkts-by-id]}
+                       :param-keypaths [:venue-predictit/venue
+                                        :venue-predictit/pos
+                                        :venue-predictit/mkts-by-id
+                                        :venue-predictit/contracts
+                                        :strategy-rcp/mkts]}
                      :venue-predictit/pos-by-contract-id
                       {:projection (fn predictit-pos-by-contract [{{:venue-predictit/keys [pos]} :partial-state}]
                                      (->> pos
