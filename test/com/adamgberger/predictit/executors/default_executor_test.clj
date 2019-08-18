@@ -101,4 +101,11 @@
           submitted-orders [{:submitted {:order-id 27337186, :mkt-id 5773, :contract-id 16861, :price 0.08, :qty 230, :trade-type :buy-yes, :cancellable? true, :created-at "2019-08-18T15:03:25.1215158Z"}}]
           expected {5773 {16861 {:valid? true, :orders [{:order-id 27337186, :mkt-id 5773, :contract-id 16861, :price 0.08, :qty 230, :trade-type :buy-yes, :cancellable? true, :created-at "2019-08-18T15:03:25.1215158Z"}]}}}
           updated (exec/update-orders old-orders orders submitted-orders)]
+      (is (= updated expected))))
+  (testing "update-orders::update"
+    (let [orders (with-meta {} {:com.adamgberger.predictit.lib.observable-state/prev {}})
+          old-orders {5773 {16861 {:valid? true, :orders []}}}
+          submitted-orders [{:submitted {:order-id 27337186, :mkt-id 5773, :contract-id 16861, :price 0.08, :qty 230, :trade-type :buy-yes, :cancellable? true, :created-at "2019-08-18T15:03:25.1215158Z"}}]
+          expected {5773 {16861 {:valid? true, :orders [{:order-id 27337186, :mkt-id 5773, :contract-id 16861, :price 0.08, :qty 230, :trade-type :buy-yes, :cancellable? true, :created-at "2019-08-18T15:03:25.1215158Z"}]}}}
+          updated (exec/update-orders old-orders orders submitted-orders)]
       (is (= updated expected)))))
