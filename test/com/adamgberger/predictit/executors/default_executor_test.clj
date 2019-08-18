@@ -70,8 +70,7 @@
     (let [{:keys [venue-state venue-id mkt-id desired-pos current-pos-by-contract-id outstanding-orders-by-contract-id]} actuals-from-desired-args
           adj-pos (set
                    (#'exec/adjust-desired-pos-for-actuals
-                    venue-state
-                    venue-id
+                    (get-in venue-state [:com.adamgberger.predictit.venues.predictit/predictit :order-books])
                     mkt-id
                     desired-pos
                     current-pos-by-contract-id
@@ -79,3 +78,27 @@
       (l/log :debug "Test adjust-desired-pos-for-actuals" {:adj-pos adj-pos :actuals actuals})
       (is (and (clojure.set/subset? adj-pos actuals)
                (clojure.set/subset? actuals adj-pos))))))
+
+(deftest test-update-orders
+  (testing "update-orders::new predictit orders"
+    (let [orders {5773 {16859 {:valid? true, :orders [{:order-id 27324640, :contract-id 16859, :qty 10, :price 0.70M, :trade-type :buy-no, :created-at (java.time.Instant/parse "2019-08-17T11:50:45.680Z"), :cancellable? true}]}}}
+          updated (exec/update-orders
+                    {}
+                    (with-meta orders {:com.adamgberger.predictit.lib.observable-state/prev nil})
+                    {})]
+      (is (= updated orders))))
+  (testing "update-orders::new predictit orders replace"
+    (let [orders {5773 {16859 {:valid? true, :orders [{:order-id 27324640, :contract-id 16859, :qty 10, :price 0.70M, :trade-type :buy-no, :created-at (java.time.Instant/parse "2019-08-17T11:50:45.680Z"), :cancellable? true}]}}}
+          old-orders {5773 {16859 {:valid? true, :orders [{:order-id 27324641, :contract-id 16860, :qty 70, :price 0.80M, :trade-type :buy-yes, :created-at (java.time.Instant/parse "2019-08-16T11:50:45.680Z"), :cancellable? true}]}}}
+          updated (exec/update-orders
+                    old-orders
+                    (with-meta orders {:com.adamgberger.predictit.lib.observable-state/prev old-orders})
+                    {})]
+      (is (= updated orders))))
+  (testing "update-orders::dups"
+    (let [orders (with-meta {} {:com.adamgberger.predictit.lib.observable-state/prev {}})
+          old-orders {5773 {16861 {:valid? true, :orders [{:order-id 27337186, :mkt-id 5773, :contract-id 16861, :price 0.08, :qty 230, :trade-type :buy-yes, :cancellable? true, :created-at "2019-08-18T15:03:25.1215158Z"}]}}}
+          submitted-orders [{:submitted {:order-id 27337186, :mkt-id 5773, :contract-id 16861, :price 0.08, :qty 230, :trade-type :buy-yes, :cancellable? true, :created-at "2019-08-18T15:03:25.1215158Z"}}]
+          expected {5773 {16861 {:valid? true, :orders [{:order-id 27337186, :mkt-id 5773, :contract-id 16861, :price 0.08, :qty 230, :trade-type :buy-yes, :cancellable? true, :created-at "2019-08-18T15:03:25.1215158Z"}]}}}
+          updated (exec/update-orders old-orders orders submitted-orders)]
+      (is (= updated expected)))))
