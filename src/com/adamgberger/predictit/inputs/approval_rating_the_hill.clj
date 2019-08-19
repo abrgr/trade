@@ -1,5 +1,6 @@
 (ns com.adamgberger.predictit.inputs.approval-rating-the-hill
-  (:require [clojure.string :as string]
+  (:require [clojure.data.csv :as csv]
+            [clojure.string :as string]
             [clojure.core.async :as async]
             [clojure.core.cache :as cache]
             [clj-http.client :as h]
@@ -9,6 +10,9 @@
   (:gen-class))
 
 (def id ::id)
+
+(def ^:private approval-question "Do you approve or disapprove of the job Donald Trump is doing as President of the United States?")
+(def ^:private net-approve-str "NET APPROVE")
 
 (defn- async-put-once [ch val]
   (async/put!
@@ -65,15 +69,17 @@
     (async/pipeline-async 1 c f in-ch)
     c))
 
+(defn- next-expected []
+  (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0))
+
 (defn- current-from-sheet [stream out-ch]
   (let [tika (Tika.)
         s (.parseToString tika stream)
-        q "Do you approve or disapprove of the job Donald Trump is doing as President of the United States?"
+        q approval-question
         q-idx (string/index-of s q)]
     (if (nil? q-idx)
       (async/close! out-ch)
       (let [q-end-idx (+ 1 q-idx (count q))
-            net-approve-str "NET APPROVE"
             net-approve-idx (string/index-of s net-approve-str q-end-idx)
             net-approve-end-idx (+ 1 net-approve-idx (count net-approve-str))
             net-approve-line-end (string/index-of s "\n" net-approve-end-idx)
@@ -85,7 +91,29 @@
          out-ch
          {:val (Integer/parseInt approval)
           :date date
-          :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)})))))
+          :next-expected (next-expected)})))))
+
+(defn- parse-google-sheet [csv]
+  (let [data (->> csv csv/read-csv (into []))
+        question-col 0
+        approve-str-col 1
+        approve-pct-col 2
+        {date :end-date} (u/parse-human-date-range-within (-> data (nth 0) (nth 0)))
+        question-line (->> data
+                           (keep-indexed #(when (string/includes? (nth %2 question-col) approval-question) %1))
+                           first)
+        approval-q-line (->> data
+                             (keep-indexed #(when (string/includes? (nth %2 approve-str-col) net-approve-str) %1))
+                             (filter #(> % question-line))
+                             first)
+        approval (-> data
+                     (nth (inc approval-q-line))
+                     (nth approval-pct-col)
+                     (.replace "%" "")
+                     Integer/parseInt)]
+    {:val approval
+     :date date
+     :next-expected (u/next-expected)}))
 
 (defn- url-stream [url out-ch]
   (l/log :debug "The hill: getting url" {:url url})
@@ -104,7 +132,7 @@
         ;stream (java.io.ByteArrayInputStream. (.getBytes body "UTF-8"))
         tika (Tika.)
         s (.parseToString tika stream)
-        q "Do you approve or disapprove of the job Donald Trump is doing as President of the United States?"
+        q approval-question
         q-idx (string/index-of s q)]
     (if (nil? q-idx)
       {:nope "nope"}
@@ -174,8 +202,13 @@
    0))
 
 (defn- google-sheet-url-to-approval-val [url out-ch]
-  (let [csv-url (u/get-google-csv-url url)]
-    ; TODO
+  (if-let [csv-url (u/get-google-csv-url url)]
+    (h/get
+       csv-url
+       {:async? true}
+       #(async-put-once out-ch (parse-google-sheet (:body %)))
+       #(do (l/log :error "Failed to get harris interactive spreadsheet" (merge (l/ex-log-msg %) {:url csv-url})
+            (async/close! out-ch))
     (async/close! out-ch)))
 
 (defn- -sheet-url-to-approval-val [url out-ch]
