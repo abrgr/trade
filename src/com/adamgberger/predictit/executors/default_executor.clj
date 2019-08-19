@@ -234,13 +234,13 @@
     order-id
     (utils/cb-wrap-error
       send-result
-      (fn send-result [_]
-        {:cancelled {:mkt-id mkt-id
-                     :contract-id contract-id
-                     :order-id order-id
-                     :trade-type :cancel
-                     :qty qty
-                     :price price}}))))
+      (fn [_]
+        (send-result {:cancelled {:mkt-id mkt-id
+                      :contract-id contract-id
+                      :order-id order-id
+                      :trade-type :cancel
+                      :qty qty
+                      :price price}})))))
 (defmethod submit-for-execution :trade
   [venue {:keys [mkt-id contract-id trade-type qty price]} send-result]
   (l/log :info "Submitting order" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
@@ -371,7 +371,7 @@
   (->> (async/to-chan orders-to-submit)
        (utils/async-map
          (fn [order out-ch]
-           (submit-for-execution venue order (partial utils/async-put-once out-ch))))
+           (submit-for-execution venue order #(utils/async-put-once out-ch (if (instance? Exception %) {:err %} %)))))
        (async/into [])
        (#(async/take! % send-result))))
 
