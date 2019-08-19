@@ -108,12 +108,12 @@
                              first)
         approval (-> data
                      (nth (inc approval-q-line))
-                     (nth approval-pct-col)
+                     (nth approve-pct-col)
                      (.replace "%" "")
                      Integer/parseInt)]
     {:val approval
      :date date
-     :next-expected (u/next-expected)}))
+     :next-expected (next-expected)}))
 
 (defn- url-stream [url out-ch]
   (l/log :debug "The hill: getting url" {:url url})
@@ -207,8 +207,8 @@
        csv-url
        {:async? true}
        #(async-put-once out-ch (parse-google-sheet (:body %)))
-       #(do (l/log :error "Failed to get harris interactive spreadsheet" (merge (l/ex-log-msg %) {:url csv-url})
-            (async/close! out-ch))
+       #(do (l/log :error "Failed to get harris interactive spreadsheet" (merge (l/ex-log-msg %) {:url csv-url}))
+            (async/close! out-ch)))
     (async/close! out-ch)))
 
 (defn- -sheet-url-to-approval-val [url out-ch]
