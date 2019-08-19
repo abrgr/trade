@@ -294,7 +294,7 @@
     (http-post
       (predictit-api-url (str "/Trade/CancelOffer/" order-id))
       params
-      #(send-result {:success true})
+      (fn [_] (send-result {:success true}))
       send-result)))
 
 (defn get-orders
