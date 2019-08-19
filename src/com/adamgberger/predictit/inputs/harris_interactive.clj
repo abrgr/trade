@@ -27,9 +27,7 @@
          :next-expected (u/next-weekday-at end-date u/ny-time 17 0)})))
 
 (defn- check-google-sheet [html cb]
-  (let [regex #"https://docs.google.com/spreadsheets/[^\"?]+"
-        url (some-> ^String (re-find regex html)
-                    (.replace "/pubhtml" "/pub?single=true&output=csv"))]
+  (let [url (u/get-google-csv-url html)]
     (if (nil? url)
       (l/log :error "Failed to find spreadsheet url in harris interactive main page")
       (h/get

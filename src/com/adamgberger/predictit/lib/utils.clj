@@ -267,3 +267,8 @@
   (->> (group-by f coll)
        (map #(vector (first %) (-> % second first)))
        (into {})))
+
+(defn get-google-csv-url [txt]
+  (let [regex #"https://docs.google.com/spreadsheets/[^\"?]+"]
+    (some-> ^String (re-find regex txt)
+            (.replace "/pubhtml" "/pub?single=true&output=csv"))))

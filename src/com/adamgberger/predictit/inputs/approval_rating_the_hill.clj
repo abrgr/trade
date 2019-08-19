@@ -122,7 +122,7 @@
          :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)}))))
 
 (defn- article-html-to-sheet-url [html out-ch]
-  (let [regex #"<iframe src=\"(https://onedrive.live.com/embed?[^\"]+)\""
+  (let [regex #"<iframe src=\"(https://onedrive.live.com/embed?[^\"]+)\"|<iframe src=\"https://docs.google.com/spreadsheets/[^\"?]+"
         [_ sheet-url] (re-find regex html)]
     (if (some? sheet-url)
       (async-put-once
@@ -163,7 +163,7 @@
                         (async/close! out-ch)))
             (apply f (concat args' [c]))))))))
 
-(defn- -sheet-url-to-approval-val [url out-ch]
+(defn- onedrive-sheet-url-to-approval-val [url out-ch]
   (async-retry
    out-ch
    (fn [ch]
@@ -172,6 +172,16 @@
           (async-thread (async-wrap-error current-from-sheet))
           (#(async/pipe % ch))))
    0))
+
+(defn- google-sheet-url-to-approval-val [url out-ch]
+  (let [csv-url (u/get-google-csv-url url)]
+    ; TODO
+    (async/close! out-ch)))
+
+(defn- -sheet-url-to-approval-val [url out-ch]
+  (if (string/includes? url "onedrive.live.com")
+    (onedrive-sheet-url-to-approval-val url out-ch)
+    (google-sheet-url-to-approval-val url out-ch)))
 
 (def ^:private sheet-url-to-approval-val (async-memoize -sheet-url-to-approval-val))
 
