@@ -27,9 +27,9 @@
                            result
                            (with-merge-meta prev {::invalid-value result}))
         new-val (with-merge-meta effective-result {::updated-at (java.time.Instant/now)
-                                                   ::prev (if (nil? prev)
-                                                            nil
-                                                            (vary-meta prev #(dissoc % ::prev)))})
+                                                   ::prev (if (instance? clojure.lang.IObj prev)
+                                                            (vary-meta prev #(dissoc % ::prev))
+                                                            nil)})
         state-update' (merge state-update {keypath new-val})
         upd' (assoc upd :update-path update-path)
         metric-labels {:key keypath
