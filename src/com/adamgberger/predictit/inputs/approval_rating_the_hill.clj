@@ -15,10 +15,12 @@
 (def ^:private net-approve-str "NET APPROVE")
 
 (defn- async-put-once [ch val]
-  (async/put!
-    ch
-    val
-    (fn [_] (async/close! ch))))
+  (if (nil? val)
+    (async/close! ch)
+    (async/put!
+      ch
+      val
+      (fn [_] (async/close! ch)))))
 
 (defn- async-retry
   ([out-ch pipeline tries]
@@ -98,22 +100,22 @@
         question-col 0
         approve-str-col 1
         approve-pct-col 2
-        {date :end-date} (u/parse-human-date-range-within (-> data (nth 0) (nth 0)))
+        {date :end-date} (u/parse-human-date-range-within (-> data (nth 1) (nth 0)))
         question-line (->> data
                            (keep-indexed #(when (string/includes? (nth %2 question-col) approval-question) %1))
                            first)
         approval-q-line (->> data
                              (keep-indexed #(when (string/includes? (nth %2 approve-str-col) net-approve-str) %1))
                              (filter #(> % question-line))
-                             first)
-        approval (-> data
-                     (nth (inc approval-q-line))
-                     (nth approve-pct-col)
-                     (.replace "%" "")
-                     Integer/parseInt)]
-    {:val approval
-     :date date
-     :next-expected (next-expected)}))
+                             first)]
+    (when (some? approval-q-line)
+      {:val (-> data
+                (nth (inc approval-q-line))
+                (nth approve-pct-col)
+                (.replace "%" "")
+                Integer/parseInt)
+       :date date
+       :next-expected (next-expected)})))
 
 (defn- url-stream [url out-ch]
   (l/log :debug "The hill: getting url" {:url url})
@@ -150,7 +152,7 @@
          :next-expected (u/next-specific-weekday-at (java.time.LocalDate/now) u/ny-time 5 14 0)}))))
 
 (defn- article-html-to-sheet-url [html out-ch]
-  (let [regex #"<iframe src=\"(https://onedrive.live.com/embed?[^\"]+)\"|<iframe src=\"https://docs.google.com/spreadsheets/[^\"?]+"
+  (let [regex #"<iframe src=\"(https://onedrive.live.com/embed?[^\"]+|https://docs.google.com/spreadsheets/[^\"?]+)"
         [_ sheet-url] (re-find regex html)]
     (if (some? sheet-url)
       (async-put-once
