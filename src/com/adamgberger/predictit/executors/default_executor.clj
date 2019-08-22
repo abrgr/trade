@@ -381,7 +381,7 @@
         existing-order? (->> prev-orders
                              vals
                              (mapcat vals)
-                             (mapcat orders)
+                             (mapcat :orders)
                              (map :order-id)
                              (into #{}))
         to-remove (->> submitted-orders
