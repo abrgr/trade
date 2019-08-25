@@ -399,7 +399,7 @@
                  suspension-msg :isTradingSuspendedMessage
                  mkts :markets} (resp-from-json % value-fns)]
             (if suspended?
-              (ex-info "TRADING SUSPENDED" {:suspension-msg suspension-msg})
+              (ex-info "TRADING SUSPENDED" {:anomaly :trading-suspended :suspension-msg suspension-msg})
               {:positions mkts}))))
       send-result)))
 
