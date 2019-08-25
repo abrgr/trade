@@ -87,6 +87,26 @@
          :current strat-pos-investment
          :cash (max 0.0 (- desired strat-pos-investment))}))))
 
+(defn- venue-predictit-pre-control [keypath cfg control-state result]
+  (when-let [suspend-until (-> control-state :venue-predictit/suspend-until)]
+    (if (.isBefore (java.time.Instant/now) suspend-until)
+      {:decision :abort
+       :reason {:anomaly :suspended}}
+      {:control-info {:venue-predictit/suspend-until nil}}))) 
+
+(defn- venue-predictit-post-control [keypath cfg control-state result]
+  (let [now (java.time.Instant/now)]
+    (when-let [{:keys [anomaly status headers]} (ex-data result)]
+      (cond
+        (= anomaly :trading-suspended) {:control-info {:venue-predictit/suspend-until (.plus now 30 java.time.temporal.ChronoUnit/MINUTES)}
+                                        :decision :abort
+                                        :reason {:anomaly :trading-suspended
+                                                 :anomaly-at now}}
+        (= status 429) {:control-info {:venue-predictit/suspend-until (.plus now (get headers "Retry-After" 60) java.time.temporal.ChronoUnit/SECONDS)}
+                        :decision :abort
+                        :reason {:anomaly :rate-limited
+                                 :anomaly-at now}}))))
+
 (defn run-trading [cfg end-chan]
   (let [once-per-10-seconds 10000
         twice-per-minute 30000
@@ -97,8 +117,10 @@
                     (prometheus/register
                       (prometheus/histogram :txn-duration-ms {:labels [:origin]})
                       (prometheus/counter :txn-count {:labels [:origin]})
-                      (prometheus/histogram :producer-duration-ms {:labels [:key :success :valid]})
-                      (prometheus/counter :producer-count {:labels [:key :success :valid]})))
+                      (prometheus/histogram :producer-duration-ms {:labels [:key]})
+                      (prometheus/counter :producer-count {:labels [:key]})
+                      (prometheus/counter :abort-count {:labels [:key]})
+                      (prometheus/counter :skip-count {:labels [:key :phase]})))
         obs-state (obs/observable-state
                     (fn make-initial-state [send-result]
                       (pv/make-venue
@@ -114,19 +136,25 @@
                                       (v/available-markets venue send-result))
                        :periodicity {:at-least-every-ms once-per-10-minutes
                                      :jitter-pct 0.2}
-                       :param-keypaths [:venue-predictit/venue]}
+                       :param-keypaths [:venue-predictit/venue]
+                       :pre-control venue-predictit-pre-control
+                       :post-control venue-predictit-post-control}
                      :venue-predictit/bal
                       {:io-producer (fn predictit-bal [{{:venue-predictit/keys [venue]} :partial-state} send-result]
                                       (v/current-available-balance venue send-result))
                        :periodicity {:at-least-every-ms once-per-10-minutes
                                     :jitter-pct 0.2}
-                       :param-keypaths [:venue-predictit/venue]}
+                       :param-keypaths [:venue-predictit/venue]
+                       :pre-control venue-predictit-pre-control
+                       :post-control venue-predictit-post-control}
                      :venue-predictit/pos
                       {:io-producer (fn predictit-pos [{{:venue-predictit/keys [venue]} :partial-state} send-result]
                                       (v/positions venue send-result))
                        :periodicity {:at-least-every-ms once-per-minute
                                     :jitter-pct 0.2}
-                       :param-keypaths [:venue-predictit/venue]}
+                       :param-keypaths [:venue-predictit/venue]
+                       :pre-control venue-predictit-pre-control
+                       :post-control venue-predictit-post-control}
                      :venue-predictit/monitored-mkts
                       {:projection (fn predictit-monitored-mkts [{{:strategy-rcp/keys [mkts]} :partial-state}]
                                      mkts)
@@ -165,7 +193,9 @@
                                                 {}
                                                 (flatten %))
                                              send-result)))
-                       :param-keypaths [:venue-predictit/venue :venue-predictit/monitored-mkts]}
+                       :param-keypaths [:venue-predictit/venue :venue-predictit/monitored-mkts]
+                       :pre-control venue-predictit-pre-control
+                       :post-control venue-predictit-post-control}
                      :venue-predictit/order-books
                       {:io-producer (fn predictit-order-books [{{:venue-predictit/keys [venue contracts mkts-by-id]} :partial-state} send-result]
                                       (->> contracts
@@ -204,7 +234,9 @@
                                              send-result)))
                        :periodicity {:at-least-every-ms once-per-minute
                                     :jitter-pct 0.2}
-                       :param-keypaths [:venue-predictit/venue :venue-predictit/contracts :venue-predictit/mkts-by-id]}
+                       :param-keypaths [:venue-predictit/venue :venue-predictit/contracts :venue-predictit/mkts-by-id]
+                       :pre-control venue-predictit-pre-control
+                       :post-control venue-predictit-post-control}
                      :venue-predictit/orders
                       {:io-producer (fn predictit-orders [{:keys [prev]
                                                           {:venue-predictit/keys [venue pos mkts-by-id contracts]
@@ -258,7 +290,9 @@
                                         :venue-predictit/pos
                                         :venue-predictit/mkts-by-id
                                         :venue-predictit/contracts
-                                        :strategy-rcp/mkts]}
+                                        :strategy-rcp/mkts]
+                       :pre-control venue-predictit-pre-control
+                       :post-control venue-predictit-post-control}
                      :venue-predictit/pos-by-contract-id
                       {:projection (fn predictit-pos-by-contract [{{:venue-predictit/keys [pos]} :partial-state}]
                                      (->> pos

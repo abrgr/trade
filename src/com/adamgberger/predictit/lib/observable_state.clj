@@ -17,37 +17,41 @@
     (vary-meta obj #(merge % m))
     obj))
 
-(defn- on-result [metrics start-time upd logger update-path send-update state prev keypath {:keys [validator] :as cfg} state-update result]
+(defn- invoke-control [control keypath cfg control-state args]
+  (let [control-info (when (some? control)
+                           (control keypath cfg @control-state args))]
+    (some->> control-info :control-state (swap! control-state merge))
+    control-info))
+
+(defn- default-post-control [keypath cfg _ result]
+  (when (instance? Throwable result)
+    {:decision :abort
+     :reason {:anomaly :exception
+              :exception result
+              :ex-data (ex-data result)}}))
+
+(defn- on-result [metrics control-state start-time upd logger update-path send-update abort-txn state prev keypath {:keys [post-control] :as cfg} state-update result]
   (logger :info "Finished producer" {:keypath keypath :result result :txn-id (get upd :txn-id)})
-  (let [exception? (instance? Throwable result)
-        invalid? (and (some? validator)
-                      (validator result))
-        valid? (not (or exception?  invalid?))
-        effective-result (if valid?
-                           result
-                           (with-merge-meta prev {::invalid-value result}))
-        new-val (with-merge-meta effective-result {::updated-at (java.time.Instant/now)
-                                                   ::prev (if (instance? clojure.lang.IObj prev)
-                                                            (vary-meta prev #(dissoc % ::prev))
-                                                            nil)})
+  (let [new-val (with-merge-meta result {::updated-at (java.time.Instant/now)
+                                         ::prev (if (instance? clojure.lang.IObj prev)
+                                                    (vary-meta prev #(dissoc % ::prev))
+                                                    nil)})
         state-update' (merge state-update {keypath new-val})
         upd' (assoc upd :update-path update-path)
-        metric-labels {:key keypath
-                       :success (not exception?)
-                       :valid (not invalid?)}]
+        metric-labels {:key keypath}
+        control-info (invoke-control (or post-control default-post-control) keypath cfg control-state result)]
     (prometheus/observe
       (metrics :producer-duration-ms metric-labels)
       (-> start-time
           (java.time.Duration/between (java.time.Instant/now))
           .toMillis))
     (prometheus/inc (metrics :producer-count metric-labels))
-    (when exception?
-      (logger :error "Exception in producer" {:keypath keypath
-                                              :exception result}))
-    (when invalid?
-      (logger :error "Invalid producer result" {:keypath keypath
-                                                :result result}))
-    (send-update upd' keypath state-update')))
+    (case (:decision control-info)
+      :abort (abort-txn upd keypath (:reason control-info))
+      :skip (do (logger :warn "Skipping value" {:keypath keypath :reason (:reason control-info) :result result})
+                (prometheus/inc (metrics :skip-count {:key keypath :phase :post}))
+                (send-update upd' state-update))
+      (send-update upd' keypath state-update'))))
 
 (defmacro throw->ret [& body]
   `(try
@@ -62,14 +66,17 @@
 
 (defn- handle-updates [logger
                        metrics
+                       control-state
                        send-update
+                       abort-txn
                        keypath
                        {:keys [param-keypaths
                                transient-param-keypaths
                                io-producer
                                compute-producer
                                projection
-                               timeout-ms] :as cfg}
+                               timeout-ms
+                               pre-control] :as cfg}
                        updates]
   (let [state-updates (map :state-update updates)
         state (apply merge (-> updates first :orig-state) state-updates)
@@ -78,33 +85,40 @@
         args {:partial-state partial-state
               :prev prev
               :key keypath}
+        upd (last updates)
         update-path (if (= (count updates) 1)
                       (-> updates first :update-path)
                       (mapv :update-path updates)) ; TODO: this seems wrong
-        handle-result (partial on-result metrics (java.time.Instant/now) (last updates) logger update-path send-update state prev keypath cfg (apply merge nil (map :state-update updates)))
-        result-ch (async/chan)]
-    (logger :info "Starting producer" {:keypath keypath :args args :txn-id (-> updates first (get :txn-id)) :update-path update-path})
+        handle-result (partial on-result metrics control-state (java.time.Instant/now) upd logger update-path send-update abort-txn state prev keypath cfg (apply merge nil (map :state-update updates)))
+        result-ch (async/chan)
+        control-info (invoke-control pre-control keypath cfg control-state args)]
+    (case (:decision control-info)
+      :abort (abort-txn upd keypath (:reason control-info))
+      :skip (do (logger :warn "Skipping invocation" {:reason (:reason control-info) :keypath keypath :args args})
+                (prometheus/inc (metrics :skip-count {:key keypath :phase :pre}))
+                (handle-result prev))
+      (do (logger :info "Starting producer" {:keypath keypath :args args :txn-id (-> updates first (get :txn-id)) :update-path update-path})
 
-    (async/go
-      (let [timeout-ch (async/timeout (or timeout-ms 60000))
-            [v p] (async/alts! [result-ch timeout-ch])]
-        (if (= p timeout-ch)
-          (do (logger :warn "Producer timeout" {:cfg cfg :keypath keypath :args args :updates updates})
-              (handle-result (ex-info "Timeout" {:anomaly :timeout :keypath keypath})))
-          (handle-result v))))
+          (async/go
+            (let [timeout-ch (async/timeout (or timeout-ms 60000))
+                  [v p] (async/alts! [result-ch timeout-ch])]
+              (if (= p timeout-ch)
+                (do (logger :warn "Producer timeout" {:cfg cfg :keypath keypath :args args :updates updates})
+                    (handle-result (ex-info "Timeout" {:anomaly :timeout :keypath keypath})))
+                (handle-result v))))
 
-    (cond
-      (some? io-producer) (async/go
-                            (try
-                              (io-producer args #(safe-put! result-ch %))
-                              (catch Exception e
-                                (safe-put! result-ch e))))
-      (some? compute-producer) (async/take!
-                                 (async/thread (throw->ret (compute-producer args)))
-                                 #(safe-put! result-ch %))
-      (some? projection) (async/take!
-                           (async/thread (throw->ret (projection args)))
-                           #(safe-put! result-ch %)))))
+          (cond
+            (some? io-producer) (async/go
+                                  (try
+                                    (io-producer args #(safe-put! result-ch %))
+                                    (catch Exception e
+                                      (safe-put! result-ch e))))
+            (some? compute-producer) (async/take!
+                                       (async/thread (throw->ret (compute-producer args)))
+                                       #(safe-put! result-ch %))
+            (some? projection) (async/take!
+                                 (async/thread (throw->ret (projection args)))
+                                 #(safe-put! result-ch %)))))))
 
 (defn- register-periodicity [start-txn
                              keypath
@@ -129,6 +143,9 @@
           (recur (timeout-ms))))
       keypath-sentinel)))
 
+(defn- post-txn-abort [logger upd keypath reason]
+  (logger :warn "Cannot abort txn in post-txn hook" {:upd upd :keypath keypath :reason reason}))
+
 (defn- register-producer [logger
                           metrics
                           descendants
@@ -136,8 +153,10 @@
                           start-txn
                           register-post-txn-hook
                           send-update
+                          abort-txn
                           pub
                           keypath
+                          control-state
                           {:keys [param-keypaths
                                   transient-param-keypaths
                                   periodicity] :as cfg}
@@ -153,11 +172,11 @@
                                  (into #{}))]
     (async/go-loop []
       (when-let [upd (async/<! transient-update-ch)]
-        (register-post-txn-hook upd #(handle-updates logger metrics %1 keypath cfg [%2]))
+        (register-post-txn-hook upd #(handle-updates logger metrics control-state %1 (partial post-txn-abort logger) keypath cfg [%2]))
         (recur)))
     (async/go-loop []
       (when-let [{:keys [txn-source] :as upd} (async/<! periodicity-ch)]
-        (handle-updates logger metrics send-update keypath cfg [(merge upd {:keypath keypath :origin-keypath keypath :update-path []})])
+        (handle-updates logger metrics control-state send-update abort-txn keypath cfg [(merge upd {:keypath keypath :origin-keypath keypath :update-path []})])
         (recur)))
     (async/go-loop []
       (when-let [upd (async/<! update-ch)]
@@ -190,7 +209,7 @@
                                   [upd])
                               (recur (disj remaining next-keypath)
                                      (conj updates next-update))))))]
-          (handle-updates logger metrics send-update keypath cfg updates)
+          (handle-updates logger metrics control-state send-update abort-txn keypath cfg updates)
           (recur))))
     (when-let [periodicity-sentinel (register-periodicity start-txn keypath pub periodicity all-ancestors producer-cfg-by-keypath)]
       (async/sub pub periodicity-sentinel periodicity-ch))
@@ -298,6 +317,7 @@
    (init (fn [init-state] ; TODO: init should probably be a DAG we process
      ; TODO: handle (instance? Throwable init-state)
      (let [state (atom init-state)
+           control-state (atom {})
            updates-chan (async/chan)
            start-txn-chan (async/chan)
            end-txn-chan (async/chan)
@@ -353,6 +373,11 @@
            register-post-txn-hook (fn [{:keys [txn-id]} f]
                                     ; TODO: check current txn-id
                                     (swap! post-txn-hooks conj f))
+           abort-txn (fn [upd keypath reason]
+                        (logger :warn "Aborting txn" {:txn-id (:txn-id upd :reason reason)})
+                        (prometheus/inc (metrics :abort-count {:key keypath}))
+                        (swap! post-txn-hooks [])
+                        (async/>! end-txn-chan (merge upd {:action :end :state-update {}})))
            send-update (fn [upd keypath state-update]
                          (let [new-upd (make-update upd keypath state-update)
                                transients-to-wait-for (transient-next-nodes keypath)]
@@ -399,7 +424,7 @@
                    (hook send-post-txn-hook-update upd))) ; TODO: weird that this assumes a call to send-post-txn-hook-update
              (recur))))
        (doseq [[keypath cfg] producer-cfg-by-keypath]
-         (register-producer logger metrics descendants all-ancestors start-txn register-post-txn-hook send-update p keypath cfg producer-cfg-by-keypath))
+         (register-producer logger metrics descendants all-ancestors start-txn register-post-txn-hook send-update abort-txn p keypath control-state cfg producer-cfg-by-keypath))
        state)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
