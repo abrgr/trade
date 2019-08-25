@@ -92,20 +92,27 @@
     (if (.isBefore (java.time.Instant/now) suspend-until)
       {:decision :abort
        :reason {:anomaly :suspended}}
-      {:control-info {:venue-predictit/suspend-until nil}}))) 
+      {:control-state {:venue-predictit/suspend-until nil}}))) 
 
 (defn- venue-predictit-post-control [keypath cfg control-state result]
   (let [now (java.time.Instant/now)]
     (when-let [{:keys [anomaly status headers]} (ex-data result)]
       (cond
-        (= anomaly :trading-suspended) {:control-info {:venue-predictit/suspend-until (.plus now 30 java.time.temporal.ChronoUnit/MINUTES)}
+        (= anomaly :trading-suspended) {:control-state {:venue-predictit/suspend-until (.plus now 30 java.time.temporal.ChronoUnit/MINUTES)}
                                         :decision :abort
                                         :reason {:anomaly :trading-suspended
                                                  :anomaly-at now}}
-        (= status 429) {:control-info {:venue-predictit/suspend-until (.plus now (get headers "Retry-After" 60) java.time.temporal.ChronoUnit/SECONDS)}
+        (= status 429) {:control-state {:venue-predictit/suspend-until (.plus now (get headers "Retry-After" 60) java.time.temporal.ChronoUnit/SECONDS)}
                         :decision :abort
                         :reason {:anomaly :rate-limited
                                  :anomaly-at now}}))))
+
+(defn- venue-predictit-post-control-array [keypath cfg control-state results]
+  (let [result (->> results
+                    (filter #(-> % ex-data some?))
+                    first)]
+    ; since we have many results, we never abort
+    (dissoc (venue-predictit-post-control keypath cfg control-state result) :decision)))
 
 (defn run-trading [cfg end-chan]
   (let [once-per-10-seconds 10000
@@ -472,8 +479,10 @@
                                            :venue-predictit/keys [venue]} :partial-state}
                                          send-result]
                                       (exec/execute-orders venue immediately-executable-trades send-result))
-                      :param-keypaths [:executor/immediately-executable-trades
-                                       :venue-predictit/venue]}}
+                       :param-keypaths [:executor/immediately-executable-trades
+                                        :venue-predictit/venue]
+                       :pre-control venue-predictit-pre-control
+                       :post-control venue-predictit-post-control-array}}
                     :logger l/log
                     :metrics metrics)]
     (standalone/metrics-server metrics {:port 8080})))
