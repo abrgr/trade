@@ -374,10 +374,10 @@
                                     ; TODO: check current txn-id
                                     (swap! post-txn-hooks conj f))
            abort-txn (fn [upd keypath reason]
-                        (logger :warn "Aborting txn" {:txn-id (:txn-id upd :reason reason)})
+                        (logger :warn "Aborting txn" {:txn-id (:txn-id upd) :reason reason})
                         (prometheus/inc (metrics :abort-count {:key keypath}))
-                        (swap! post-txn-hooks [])
-                        (async/>! end-txn-chan (merge upd {:action :end :state-update {}})))
+                        (reset! post-txn-hooks [])
+                        (async/put! end-txn-chan (merge upd {:action :end :state-update {}})))
            send-update (fn [upd keypath state-update]
                          (let [new-upd (make-update upd keypath state-update)
                                transients-to-wait-for (transient-next-nodes keypath)]
@@ -404,7 +404,7 @@
                (do
                  (async/>! updates-chan (make-update (assoc txn :orig-state @state) (:keypath txn) nil))
                  (when-let [{:keys [state-update] end-txn-id :txn-id end-action :action :as end-txn} (async/<! end-txn-chan)]
-                   (logger :info "Ending txn" {:txn-id (-> end-txn :txn :txn-id)})
+                   (logger :info "Ending txn" {:txn-id end-txn-id})
                    (prometheus/observe (metrics :txn-duration-ms {:origin origin-keypath}) (-> start-time (java.time.Duration/between (java.time.Instant/now)) .toMillis))
                    (prometheus/inc (metrics :txn-count {:origin origin-keypath}))
                    (if (not (and (= end-txn-id txn-id)
