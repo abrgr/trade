@@ -379,7 +379,7 @@
                (do
                  (async/>! updates-chan (make-update (assoc txn :orig-state @state) (:keypath txn) nil))
                  (when-let [{:keys [state-update] end-txn-id :txn-id end-action :action :as end-txn} (async/<! end-txn-chan)]
-                   (logger :info "Ending txn" {:txn end-txn})
+                   (logger :info "Ending txn" {:txn-id (-> end-txn :txn :txn-id)})
                    (prometheus/observe (metrics :txn-duration-ms {:origin origin-keypath}) (-> start-time (java.time.Duration/between (java.time.Instant/now)) .toMillis))
                    (prometheus/inc (metrics :txn-count {:origin origin-keypath}))
                    (if (not (and (= end-txn-id txn-id)
