@@ -87,12 +87,19 @@
          :current strat-pos-investment
          :cash (max 0.0 (- desired strat-pos-investment))}))))
 
-(defn- venue-predictit-pre-control [keypath cfg control-state result]
-  (when-let [suspend-until (-> control-state :venue-predictit/suspend-until)]
-    (if (.isBefore (java.time.Instant/now) suspend-until)
-      {:decision :abort
-       :reason {:anomaly :suspended}}
-      {:control-state {:venue-predictit/suspend-until nil}}))) 
+(defn- suspend-until-pre-control
+  ([suspend-until-key]
+    (suspend-until-pre-control suspend-until-key (constantly true)))
+  ([suspend-until-key suspend-pred]
+    (fn pre-control [keypath cfg control-state args]
+      (when-let [suspend-until (-> control-state suspend-until-key)]
+        (if (.isBefore (java.time.Instant/now) suspend-until)
+          (when (suspend-pred keypath cfg control-state args)
+            {:decision :abort
+             :reason {:anomaly :suspended}})
+          {:control-state {suspend-until-key nil}})))))
+
+(def ^:private venue-predictit-pre-control (suspend-until-pre-control :venue-predictit/suspend-until))
 
 (defn- venue-predictit-post-control [keypath cfg control-state result]
   (let [now (java.time.Instant/now)]
@@ -327,7 +334,24 @@
                                         (rasmussen-input/get-current send-result))
                        :periodicity {:at-least-every-ms once-per-10-seconds
                                     :jitter-pct 0.2}
-                       :param-keypaths []}
+                       :param-keypaths []
+                       :pre-control (suspend-until-pre-control
+                                      :rasmussen/suspend-until
+                                      (fn [keypath cfg control-state args]
+                                        (let [next-ras (-> args :prev :next-expected)
+                                              now (java.time.LocalDateTime/now utils/ny-time)
+                                              window-mins 10
+                                              diff-mins (-> now (.until next-ras java.time.temporal.ChronoUnit/MINUTES) Math/abs)]
+                                          ; only allow suspension if diff-mins outside of window-mins
+                                          (> diff-mins window-mins))))
+                       :post-control (fn [keypath cfg control-state result]
+                                        (let [now (java.time.Instant/now)]
+                                          (when-let [{:keys [anomaly status headers]} (ex-data result)]
+                                            (cond
+                                              (= status 404) {:control-state {:rasmussen/suspend-until (.plus now 10 java.time.temporal.ChronoUnit/MINUTES)}
+                                                              :decision :abort
+                                                              :reason {:anomaly :not-found
+                                                                       :anomaly-at now}}))))}
                      :inputs/yougov-weekly-registered-current
                       {:io-producer (fn inputs-yougov-weekly-registered-current [_ send-result]
                                         (yougov-weekly-input/get-current send-result))
