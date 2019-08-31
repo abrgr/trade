@@ -168,7 +168,11 @@
                                        (filter some?)
                                        (into []))]
     (if valid?
-      (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob)
+      (->> (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob)
+           (mapv
+             (fn [{:keys [weight] :as m}]
+               ; Divide by 2 to accomodate 2 simultaneous markets on mondays & tuesdays
+               (merge m {:orig-weight weight :weight (/ weight 2)}))))
       [])))
 
 (defn calculate-trades [hurdle-rate
