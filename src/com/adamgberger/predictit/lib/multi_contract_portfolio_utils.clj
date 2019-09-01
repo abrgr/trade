@@ -85,7 +85,7 @@
     (if (= CobylaExitStatus/NORMAL res)
       (let [with-weights (transduce
                            (comp
-                             (map-indexed #(assoc (get contracts %1) :weight (round4 (max 0 %2)))) ; need the max here to get rid of double artifacts that break our non-neg constraint
+                             (map-indexed #(assoc (get contracts %1) :weight (round2 (max 0 %2)))) ; need the max here to get rid of double artifacts that break our non-neg constraint
                              (filter (comp not :cash?)))
                            conj
                            weights)]
@@ -141,7 +141,13 @@
 (def -memoized-get-optimal-bets (memo/lru -get-optimal-bets :lru/threshold 100))
 
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
-  (let [result (-memoized-get-optimal-bets hurdle-return contracts-price-and-prob)]
+  (let [rounded-contracts (transduce
+                            (comp
+                              (map #(update % :prob round4))
+                              (map #(update % :est-value round4)))
+                            conj
+                            contracts-price-and-prob)
+        result (-memoized-get-optimal-bets hurdle-return rounded-contracts)]
     (when (nil? result)
       ; never cache errors
       (memo/memo-clear! -memoized-get-optimal-bets [hurdle-return contracts-price-and-prob]))
