@@ -7,21 +7,18 @@
                               CobylaExitStatus))
   (:gen-class))
 
+(def ^:private optimizer-runs 300)
+
 (defn- odds [pos result]
   (let [{:keys [price trade-type cash?]} pos
-        price (if (nil? price)
-                nil
-                (double price))
+        price (when (some? price) (double price))
         result-yes? (= result :yes)
-        result-no? (not result-yes?)
-        bet-yes? (or cash? (= trade-type :buy-yes))
-        bet-no? (not bet-yes?)]
+        bet-yes? (= trade-type :buy-yes)
+        correct-bet? (= result-yes? bet-yes?)]
     (cond
       cash? 0
-      (and result-yes? bet-yes?) (/ 1 price)
-      (and result-no?  bet-yes?) -1
-      (and result-yes? bet-no?)  -1
-      (and result-no?  bet-no?)  (/ 1 price))))
+      correct-bet? (/ 1 price)
+      :else -1)))
 
 (defn- wager-result [pos result]
   (let [{:keys [^Double wager]} pos
@@ -39,8 +36,8 @@
     (Math/log g)))
 
 (defn- growth-rate [contract-positions]
-    ; This is adapted from Thorpe's discussion of the Kelly Criterion
-    ; http://www.eecs.harvard.edu/cs286r/courses/fall12/papers/Thorpe_KellyCriterion2007.pdf
+  ; This is adapted from Thorpe's discussion of the Kelly Criterion
+  ; http://www.eecs.harvard.edu/cs286r/courses/fall12/papers/Thorpe_KellyCriterion2007.pdf
   (reduce
    (fn [sum {:keys [prob] :as pos}]
      (let [exp-growth (* prob (growth-for-yes-pos contract-positions pos))]
@@ -51,7 +48,7 @@
 (defn- exp-return [{:keys [est-value price]}]
   (/ (- est-value price) price))
 
-(defn- round [s n]
+(defn- round [^long s n]
   (-> n
       bigdec
       (.setScale s java.math.RoundingMode/HALF_UP)
@@ -64,11 +61,11 @@
 
 (defn- -bets-for-contracts [contracts]
   (let [len (count contracts)
-          ; constraints are represented as functions that must be non-negative
-        non-neg-constraints (map
+        ; constraints are represented as functions that must be non-negative
+        non-neg-constraints (mapv
                              (fn [^Integer i]
-                               (fn [x con]
-                                 (aset-double con (inc i) (nth x i))))
+                               (fn [^doubles x ^doubles con]
+                                 (aset-double con (inc i) (nth x i)))) ; (inc i) because budget constraint is 0th constraint
                              (range len))
         budget-constraint (fn [^doubles x ^doubles con]
                             (aset-double
@@ -79,27 +76,25 @@
         num-constraints (count constraints)
         f (reify Calcfc
             (compute [this n m x con]
-              (doseq [constraint constraints] (constraint x con))
-              (* -1 (growth-rate (map #(assoc %1 :wager %2) contracts x)))))
+              (doseq [constraint constraints] (constraint x con)) ; constraints mutate values of con
+              (* -1 (growth-rate (mapv #(assoc %1 :wager %2) contracts x)))))
         weights (double-array len (map (fn [_] (rand)) (range len)))
         rho-start 0.5
         rho-end 1.0e-4
         res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 1e5)]
     (if (= CobylaExitStatus/NORMAL res)
-      (let [with-weights (->> weights
-                              (map
-                               #(assoc %1 :weight (round4 (max 0 %2))) ; need the max here to get rid of double artifacts that break our non-neg constraint
-                               contracts)
-                              (filter (comp not :cash?)) ; remove the cash contract we added
-                              (into []))]
+      (let [with-weights (transduce
+                           (comp
+                             (map-indexed #(assoc (get contracts %1) :weight (round4 (max 0 %2)))) ; need the max here to get rid of double artifacts that break our non-neg constraint
+                             (filter (comp not :cash?)))
+                           conj
+                           weights)]
         {:result with-weights})
       {:error res})))
 
-; memoize to make our stochastic optimizer deterministic
-(def ^:private bets-for-contracts (memo/lru -bets-for-contracts :lru/threshold 100))
-
-(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob remaining-attempts]
-  (let [filtered-contracts (->> contracts-price-and-prob
+(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob]
+  (let [filtered-contracts (transduce
+                             (comp
                                 (filter #(> (exp-return %) hurdle-return))
                                 (map
                                   #(u/map-xform
@@ -107,6 +102,8 @@
                                      {:prob round2
                                       :est-value round2
                                       :price (comp bigdec round2)})))
+                             conj
+                             contracts-price-and-prob)
         total-prob (->> filtered-contracts
                         (map :prob)
                         (reduce + 0.0))
@@ -114,24 +111,38 @@
         contracts (if (> remaining-prob 0.0)
                     (conj filtered-contracts {:prob remaining-prob :cash? true})
                     filtered-contracts)
-        result (bets-for-contracts contracts)]
-    (if (:error result)
-      (do
-        (l/log :error "Failed to optimize portfolio" {:contracts contracts
-                                                      :orig-contracts contracts-price-and-prob
-                                                      :opt-result (:error result)
-                                                      :remaining-attempts remaining-attempts})
-        (memo/memo-clear! bets-for-contracts [contracts]) ; never cache errors
-        (if (> remaining-attempts 0)
-          ; we may get diverging rounding errors for some initial weights, try again with new random weights
-          (-get-optimal-bets hurdle-return contracts-price-and-prob (dec remaining-attempts))
-          []))
+        ; TODO: it would be great to find a proper constrained optimizer for differentiable functions
+        ;       as-is, we are meta-optimizing our optimizer
+        result (reduce
+                 (fn [best {bets :result :keys [error]}]
+                   (let [growth-rate (if (some? error)
+                                         -100
+                                         (growth-rate (map #(assoc % :wager (:weight %)) bets)))]
+                     (if (> growth-rate (:growth-rate best))
+                       {:growth-rate growth-rate
+                        :bets bets}
+                       best)))
+                 {:growth-rate 0
+                  :error (ex-info "Could not optimize portfolio" {:anomaly :failed-optimization})}
+                 (pmap (fn [_] (-bets-for-contracts contracts)) (range optimizer-runs)))
+        {:keys [bets error]} result]
+    (if (some? error)
+      (l/log :error "Failed to optimize portfolio" {:contracts contracts
+                                                    :orig-contracts contracts-price-and-prob
+                                                    :opt-result error})
       (do
         (l/log :info "Optimized portfolio" {:contracts contracts
                                             :orig-contracts contracts-price-and-prob
-                                            :result (:result result)
+                                            :result bets
                                             :opt-result CobylaExitStatus/NORMAL})
-        (:result result)))))
+        bets))))
+
+; memoize since we're doing many runs of an expensive operation
+(def -memoized-get-optimal-bets (memo/lru -get-optimal-bets :lru/threshold 100))
 
 (defn get-optimal-bets [hurdle-return contracts-price-and-prob]
-  (-get-optimal-bets hurdle-return contracts-price-and-prob 5))
+  (let [result (-memoized-get-optimal-bets hurdle-return contracts-price-and-prob)]
+    (when (nil? result)
+      ; never cache errors
+      (memo/memo-clear! -memoized-get-optimal-bets [hurdle-return contracts-price-and-prob]))
+    result))
