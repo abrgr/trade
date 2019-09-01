@@ -183,21 +183,24 @@
                                     :mkt-id mkt-id
                                     :contract-id contract-id
                                     :target-price (:est-value likely-fill)
-                                    :price (:price likely-fill)}))
+                                    :price (:price likely-fill)
+                                    :reason :wrong-side}))
                 order-place-buy (when (> remaining-qty 0)
                                   {:trade-type (:trade-type pos)
                                    :mkt-id mkt-id
                                    :contract-id contract-id
                                    :qty remaining-qty
                                    :target-price target-price
-                                   :price desired-price})
+                                   :price desired-price
+                                   :reason :buy-more})
                 order-cancel-old-ords (map
                                        (fn [ord]
                                          {:trade-type :cancel
                                           :mkt-id mkt-id
                                           :contract-id contract-id
                                           :target-price target-price
-                                          :order-id (:order-id ord)})
+                                          :order-id (:order-id ord)
+                                          :reason :outdated-order})
                                        old-ords-to-cancel)
                 order-sell-old-pos (when (and (>= desired-qty 0)
                                               (< desired-qty (- cur-qty our-side-sell-qty)))
@@ -206,7 +209,8 @@
                                       :contract-id contract-id
                                       :qty (- cur-qty desired-qty our-side-sell-qty)
                                       :target-price desired-price ; TODO: this ain't right but we don't really use this field
-                                      :price desired-price})]
+                                      :price desired-price
+                                      :reason :sell-some})]
             (->>
              [; we hold something we don't want; sell it
               order-sell-opp
@@ -300,22 +304,27 @@
              [contract-id orders]))
        (into {})))
 
-(defn generate-desired-trades [bankroll
-                               mkts-by-id
-                               req-pos
-                               pos-by-contract-id
-                               bal
-                               orders
-                               order-books]
+(defn generate-desired-positions [bankroll
+                                  req-pos]
   (->> req-pos
     (map
       (fn [[mkt-id req-positions]]
-        (let [mkt (get mkts-by-id mkt-id)
-              outstanding-orders-by-contract-id (get-orders-by-contract-id orders mkt-id)]
-          (if (nil? bankroll)
-            nil
-            (let [desired-pos (map (partial desired-pos-for-req-pos bankroll) req-positions)]
-              [mkt-id (adjust-desired-pos-for-actuals order-books mkt-id desired-pos pos-by-contract-id outstanding-orders-by-contract-id)])))))
+        (if (nil? bankroll)
+          nil
+          (let [desired-pos (mapv (partial desired-pos-for-req-pos bankroll) req-positions)]
+            [mkt-id desired-pos]))))
+    (filter some?)
+    (into {})))
+
+(defn generate-desired-trades [desired-pos
+                               pos-by-contract-id
+                               orders
+                               order-books]
+  (->> desired-pos
+    (map
+      (fn [[mkt-id desired-positions]]
+        (let [outstanding-orders-by-contract-id (get-orders-by-contract-id orders mkt-id)]
+          [mkt-id (adjust-desired-pos-for-actuals order-books mkt-id desired-positions pos-by-contract-id outstanding-orders-by-contract-id)])))
     (filter some?)
     (into {})))
 

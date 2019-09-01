@@ -453,23 +453,25 @@
                                         :venue-predictit/bal
                                         :venue-predictit/pos
                                         :strategy-rcp/mkt-ids]}
-                     :strategy-rcp/desired-trades
+                     :strategy-rcp/desired-positions
                       {:compute-producer (fn strategy-rcp-desired-trades
-                                             [{{:venue-predictit/keys [mkts-by-id pos bal order-books pos-by-contract-id]
-                                                :executor/keys [outstanding-orders]
-                                                :strategy-rcp/keys [bankroll req-pos]} :partial-state}]
-                                          (exec/generate-desired-trades bankroll mkts-by-id req-pos pos-by-contract-id bal outstanding-orders order-books))
+                                             [{{:strategy-rcp/keys [bankroll req-pos]} :partial-state}]
+                                          (exec/generate-desired-positions bankroll req-pos))
                        :param-keypaths [:strategy-rcp/bankroll
-                                        :venue-predictit/mkts-by-id
-                                        :venue-predictit/pos-by-contract-id
-                                        :strategy-rcp/req-pos
-                                        :venue-predictit/pos
-                                        :venue-predictit/bal
-                                        :executor/outstanding-orders
-                                        :venue-predictit/order-books]
+                                        :strategy-rcp/req-pos]
                        ; TODO: don't really want this periodic; just want immediately-executable-trades executable
                        :periodicity {:at-least-every-ms twice-per-minute
                                      :jitter-pct 0.2}}
+                     :strategy-rcp/desired-trades
+                      {:compute-producer (fn strategy-rcp-desired-trades
+                                             [{{:venue-predictit/keys [order-books pos-by-contract-id]
+                                                :executor/keys [outstanding-orders]
+                                                :strategy-rcp/keys [desired-positions]} :partial-state}]
+                                          (exec/generate-desired-trades desired-positions pos-by-contract-id outstanding-orders order-books))
+                       :param-keypaths [:strategy-rcp/desired-positions
+                                        :venue-predictit/pos-by-contract-id
+                                        :executor/outstanding-orders
+                                        :venue-predictit/order-books]}
                      :executor/outstanding-orders
                       {:compute-producer (fn executor-outstanding-orders
                                              [{{:venue-predictit/keys [orders]
