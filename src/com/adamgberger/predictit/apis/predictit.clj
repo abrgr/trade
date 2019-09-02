@@ -272,14 +272,16 @@
                 :form-params {:quantity (int quantity)
                               :pricePerShare (int (* 100 price))
                               :contractId contract-id
-                              :tradeType (trade-type numeric-trade-types)}}]
+                              :tradeType (trade-type numeric-trade-types)}}
+        value-fns {:dateCreated utils/parse-isoish-datetime
+                   :pricePerShare utils/to-price}]
     (http-post
       (predictit-api-url "/Trade/SubmitTrade")
       params
       #(send-result
         (if (-> % :body nil?)
           (ex-info "Bad submit-order response" {:resp %})
-          {:order (resp-from-json %)}))
+          {:order (resp-from-json % value-fns)}))
       send-result)))
 
 (defn cancel-order
