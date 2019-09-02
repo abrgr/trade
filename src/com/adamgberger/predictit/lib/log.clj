@@ -9,13 +9,16 @@
   (println (pr-str (async/<! log-chan)))
   (recur))
 
+(def ^:dynamic *skipped-log-levels* #{:trace :debug})
+
 (defn log
   ([level msg]
    (log level msg {}))
   ([level msg extra]
    (let [ts (-> (java.time.Instant/now) str)
          msg (merge {:level level :msg msg} extra {:ts ts})]
-     (async/>!! log-chan msg))))
+     (when-not (*skipped-log-levels* level)
+       (async/>!! log-chan msg)))))
 
 (defn ex-log-msg [^Exception ex]
   {:stack (string/join "  <-  " (.getStackTrace ex))

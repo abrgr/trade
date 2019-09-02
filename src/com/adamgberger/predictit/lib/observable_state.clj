@@ -31,7 +31,7 @@
               :ex-data (ex-data result)}}))
 
 (defn- on-result [metrics control-state start-time upd logger update-path send-update abort-txn state prev keypath {:keys [post-control] :as cfg} state-update result]
-  (logger :info "Finished producer" {:keypath keypath :result result :txn-id (get upd :txn-id)})
+  (logger :debug "Finished producer" {:keypath keypath :result result :txn-id (get upd :txn-id)})
   (let [new-val (with-merge-meta result {::updated-at (java.time.Instant/now)
                                          ::prev (if (instance? clojure.lang.IObj prev)
                                                     (vary-meta prev #(dissoc % ::prev))
@@ -102,7 +102,7 @@
       :skip (do (logger :warn "Skipping invocation" {:reason (:reason control-info) :keypath keypath :args args})
                 (prometheus/inc (metrics :skip-count {:key keypath :phase :pre}))
                 (handle-result prev))
-      (do (logger :info "Starting producer" {:keypath keypath :args args :txn-id (-> updates first (get :txn-id)) :update-path update-path})
+      (do (logger :debug "Starting producer" {:keypath keypath :args args :txn-id (-> updates first (get :txn-id)) :update-path update-path})
 
           (async/go
             (let [timeout-ch (async/timeout (or timeout-ms 60000))
@@ -403,13 +403,13 @@
        (async/go-loop []
          (when-let [{:keys [txn-id action origin-keypath] :as txn} (async/<! start-txn-chan)]
            (let [start-time (java.time.Instant/now)]
-             (logger :info "Starting txn" {:txn txn})
+             (logger :debug "Starting txn" {:txn txn})
              (if (not= action :start)
                (logger :error "Expected start transaction" {:txn txn})
                (do
                  (async/>! updates-chan (make-update (assoc txn :orig-state @state) (:keypath txn) nil))
                  (when-let [{:keys [state-update] end-txn-id :txn-id end-action :action :as end-txn} (async/<! end-txn-chan)]
-                   (logger :info "Ending txn" {:txn-id end-txn-id})
+                   (logger :debug "Ending txn" {:txn-id end-txn-id})
                    (prometheus/observe (metrics :txn-duration-ms {:origin origin-keypath}) (-> start-time (java.time.Duration/between (java.time.Instant/now)) .toMillis))
                    (prometheus/inc (metrics :txn-count {:origin origin-keypath}))
                    (if (not (and (= end-txn-id txn-id)
