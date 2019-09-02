@@ -7,7 +7,7 @@
                               CobylaExitStatus))
   (:gen-class))
 
-(def ^:private optimizer-runs 300)
+(def ^:private optimizer-runs 1000)
 
 (defn- odds [pos result]
   (let [{:keys [price trade-type cash?]} pos
@@ -33,7 +33,7 @@
                (+ sum res)))
            1.0
            contract-positions)]
-    (Math/log g)))
+    (Math/log (max g Double/MIN_NORMAL)))) ; the max is here since we may not meet the budget constraint so may be negative
 
 (defn- growth-rate [contract-positions]
   ; This is adapted from Thorpe's discussion of the Kelly Criterion
@@ -59,38 +59,41 @@
 
 (declare -get-optimal-bets)
 
-(defn- -bets-for-contracts [contracts]
-  (let [len (count contracts)
-        ; constraints are represented as functions that must be non-negative
-        non-neg-constraints (mapv
-                             (fn [^Integer i]
-                               (fn [^doubles x ^doubles con]
-                                 (aset-double con (inc i) (nth x i)))) ; (inc i) because budget constraint is 0th constraint
-                             (range len))
-        budget-constraint (fn [^doubles x ^doubles con]
-                            (aset-double
-                             con
-                             0
-                             (- 1 (reduce (fn [^Double sum ^Double val] (+ sum (Math/abs val))) 0.0 x))))
-        constraints (conj non-neg-constraints budget-constraint)
-        num-constraints (count constraints)
-        f (reify Calcfc
-            (compute [this n m x con]
-              (doseq [constraint constraints] (constraint x con)) ; constraints mutate values of con
-              (* -1 (growth-rate (mapv #(assoc %1 :wager %2) contracts x)))))
-        weights (double-array len (map (fn [_] (rand)) (range len)))
-        rho-start 0.5
-        rho-end 1.0e-4
-        res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 1e5)]
-    (if (= CobylaExitStatus/NORMAL res)
-      (let [with-weights (transduce
-                           (comp
-                             (map-indexed #(assoc (get contracts %1) :weight (round2 (max 0 %2)))) ; need the max here to get rid of double artifacts that break our non-neg constraint
-                             (filter (comp not :cash?)))
-                           conj
-                           weights)]
-        {:result with-weights})
-      {:error res})))
+(defn- -bets-for-contracts
+  ([contracts]
+    (let [len (count contracts)]
+      (-bets-for-contracts contracts (double-array len (map (fn [_] (rand)) (range len))))))
+  ([contracts weights]
+    (let [len (count contracts)
+          ; constraints are represented as functions that must be non-negative
+          non-neg-constraints (mapv
+                               (fn [^Integer i]
+                                 (fn [^doubles x ^doubles con]
+                                   (aset-double con (inc i) (nth x i)))) ; (inc i) because budget constraint is 0th constraint
+                               (range len))
+          budget-constraint (fn [^doubles x ^doubles con]
+                              (aset-double
+                               con
+                               0
+                               (- 1 (reduce (fn [^Double sum ^Double val] (+ sum (Math/abs val))) 0.0 x))))
+          constraints (conj non-neg-constraints budget-constraint)
+          num-constraints (count constraints)
+          f (reify Calcfc
+              (compute [this n m x con]
+                (doseq [constraint constraints] (constraint x con)) ; constraints mutate values of con
+                (* -1 (growth-rate (mapv #(assoc %1 :wager %2) contracts x)))))
+          rho-start 0.25
+          rho-end 1.0e-3
+          res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 1e8)]
+      (if (= CobylaExitStatus/NORMAL res)
+        (let [with-weights (transduce
+                             (comp
+                               (map-indexed #(assoc (get contracts %1) :weight (round2 (max 0 %2)))) ; need the max here to get rid of double artifacts that break our non-neg constraint
+                               (filter (comp not :cash?)))
+                             conj
+                             weights)]
+          {:result with-weights})
+        {:error res}))))
 
 (defn- -get-optimal-bets [hurdle-return contracts-price-and-prob]
   (let [filtered-contracts (transduce
@@ -122,14 +125,15 @@
                        {:growth-rate growth-rate
                         :bets bets}
                        best)))
-                 {:growth-rate 0
+                 {:growth-rate -1
                   :error (ex-info "Could not optimize portfolio" {:anomaly :failed-optimization})}
                  (pmap (fn [_] (-bets-for-contracts contracts)) (range optimizer-runs)))
         {:keys [bets error]} result]
     (if (some? error)
-      (l/log :error "Failed to optimize portfolio" {:contracts contracts
-                                                    :orig-contracts contracts-price-and-prob
-                                                    :opt-result error})
+      (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
+                                                        :orig-contracts contracts-price-and-prob
+                                                        :opt-result error})
+          nil)
       (do
         (l/log :info "Optimized portfolio" {:contracts contracts
                                             :orig-contracts contracts-price-and-prob
