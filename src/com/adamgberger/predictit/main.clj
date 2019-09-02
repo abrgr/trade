@@ -99,7 +99,20 @@
              :reason {:anomaly :suspended}})
           {:control-state {suspend-until-key nil}})))))
 
+(defn- trading-pre-control [keypath cfg control-state args]
+  (when (:strategy-rcp/suspend-trading control-state)
+    {:decision :abort
+     :reason {:anomaly :rcp-trading-suspended}}))
+
 (def ^:private venue-predictit-pre-control (suspend-until-pre-control :venue-predictit/suspend-until))
+
+(defn- merge-controls [& ctrls]
+  (fn [keypath cfg control-state result]
+    (reduce
+      (fn [merged ctrl]
+        (merge merged (ctrl keypath cfg control-state result)))
+      {}
+      ctrls)))
 
 (defn- venue-predictit-post-control [keypath cfg control-state result]
   (let [now (java.time.Instant/now)]
@@ -401,12 +414,24 @@
                                       (partial strategy-rcp/adapt-mkt contracts)
                                       mkts))
                        :param-keypaths [:strategy-rcp/mkts :venue-predictit/contracts]}
-                     :strategy-rcp/prob-dist ; TODO: validate both some?
+                     :strategy-rcp/prob-dist
                       {:projection (fn strategy-rcp-prob-dist
                                        [{{est :estimators/approval-rcp
                                           tradable-mkts :strategy-rcp/tradable-mkts} :partial-state}]
                                     (strategy-rcp/calculate-prob-dists est tradable-mkts))
-                       :param-keypaths [:estimators/approval-rcp :strategy-rcp/tradable-mkts]}
+                       :param-keypaths [:estimators/approval-rcp :strategy-rcp/tradable-mkts]
+                       :post-control (fn [_ _ _ results]
+                                       (let [valid (->> results
+                                                        vals
+                                                        (map vals)
+                                                        (map (partial reduce + 0.0))
+                                                        (every? #(> % 0.99M)))]
+                                         (if valid
+                                           {:control-state {:strategy-rcp/suspend-trading false}}
+                                           {:control-state {:strategy-rcp/suspend-trading true}
+                                            :decision :abort
+                                            :reason {:anomaly :bad-probabilities
+                                                     :anomaly-at (java.time.Instant/now)}})))}
                      :strategy-rcp/latest-major-input-change
                       {:compute-producer (fn strategy-rcp-latest-major-input-change [{{est :estimators/approval-rcp} :partial-state}]
                                           (strategy-rcp/calculate-major-input-change est))
@@ -509,7 +534,7 @@
                                       (exec/execute-orders venue immediately-executable-trades send-result))
                        :param-keypaths [:executor/immediately-executable-trades
                                         :venue-predictit/venue]
-                       :pre-control venue-predictit-pre-control
+                       :pre-control (merge-controls venue-predictit-pre-control trading-pre-control)
                        :post-control venue-predictit-post-control-array}}
                     :logger l/log
                     :metrics metrics)]

@@ -23,15 +23,17 @@
     ; Return a bound {:lower-inclusive x :upper-inclusive y} or nil
   (let [lower-match (re-matches #"(\d+[.]\d)% or lower" c-name)
         higher-match (re-matches #"(\d+[.]\d)% or higher" c-name)
-        range-match (re-matches #"(\d+[.]\d)%\s*[-]\s*(\d+[.]\d)%" c-name)]
-    (cond
-      (some? lower-match) {:lower-inclusive (utils/to-decimal -1100)
-                           :upper-inclusive (-> lower-match second utils/to-decimal)}
-      (some? higher-match) {:lower-inclusive (-> higher-match second utils/to-decimal)
-                            :upper-inclusive (utils/to-decimal 1000)}
-      (some? range-match) {:lower-inclusive (-> range-match second utils/to-decimal)
-                           :upper-inclusive (-> range-match next second utils/to-decimal)}
-      :else nil)))
+        range-match (re-matches #"(\d+[.]\d)%\s*[-]\s*(\d+[.]\d)%" c-name)
+        bounds (cond
+                 (some? lower-match) {:lower-inclusive (utils/to-decimal -1100)
+                                      :upper-inclusive (-> lower-match second utils/to-decimal)}
+                 (some? higher-match) {:lower-inclusive (-> higher-match second utils/to-decimal)
+                                       :upper-inclusive (utils/to-decimal 1000)}
+                 (some? range-match) {:lower-inclusive (-> range-match second utils/to-decimal)
+                                      :upper-inclusive (-> range-match next second utils/to-decimal)}
+                 :else nil)]
+    {:lower-inclusive (-> bounds :lower-inclusive (- 0.05M))
+     :upper-inclusive (-> bounds :upper-inclusive (+ 0.05M))}))
 
 (defn adapt-market-name-to-end-date [m-name]
     ; Deal with names like
