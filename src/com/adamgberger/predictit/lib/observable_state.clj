@@ -79,8 +79,13 @@
                                pre-control] :as cfg}
                        updates]
   (let [state-updates (map :state-update updates)
-        state (apply merge (-> updates first :orig-state) state-updates)
-        partial-state (select-keys state (concat param-keypaths transient-param-keypaths))
+        {:keys [orig-state]} (first updates)
+        state (apply merge orig-state state-updates)
+        partial-state (reduce
+                        (fn [ps k]
+                          (assoc ps k (with-merge-meta (get state k) {::txn-start-val (get orig-state k)})))
+                        {}
+                        (concat param-keypaths transient-param-keypaths))
         prev (keypath state)
         args {:partial-state partial-state
               :prev prev
