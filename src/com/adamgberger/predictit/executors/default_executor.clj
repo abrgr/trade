@@ -386,7 +386,7 @@
 
 (defn update-orders [prev-orders orders submitted-orders]
   ; TODO: we shouldn't know we're running in observable-state
-  (let [orders-changed (-> orders meta :com.adamgberger.predictit.lib.observable-state/prev (not= orders))
+  (let [orders-changed (-> orders meta :com.adamgberger.predictit.lib.observable-state/txn-start-val (not= orders))
         existing-order? (->> prev-orders
                              vals
                              (mapcat vals)
