@@ -1,5 +1,5 @@
 (ns com.adamgberger.predictit.lib.multi-contract-portfolio-utils
-  (:require [clojure.core.memoize :as memo]
+  (:require [clojure.core.cache :as cache]
             [com.adamgberger.predictit.lib.utils :as u]
             [com.adamgberger.predictit.lib.log :as l])
   (:import (de.xypron.jcobyla Calcfc
@@ -57,14 +57,12 @@
 (def ^:private round2 (partial round 2))
 (def ^:private round4 (partial round 4))
 
-(declare -get-optimal-bets)
-
 (defn- -bets-for-contracts
   ([contracts]
-    (let [len (count contracts)]
-      (-bets-for-contracts contracts (double-array len (map (fn [_] (rand)) (range len))))))
-  ([contracts weights]
+    (-bets-for-contracts contracts (for [_ contracts] (rand))))
+  ([contracts weight-seq]
     (let [len (count contracts)
+          weights (double-array len weight-seq)
           ; constraints are represented as functions that must be non-negative
           non-neg-constraints (mapv
                                (fn [^Integer i]
@@ -95,7 +93,7 @@
           {:result with-weights})
         {:error res}))))
 
-(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob]
+(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob prev-weights-by-contract-id]
   (let [filtered-contracts (transduce
                              (comp
                                 (filter #(> (exp-return %) hurdle-return))
@@ -114,20 +112,31 @@
         contracts (if (> remaining-prob 0.0)
                     (conj filtered-contracts {:prob remaining-prob :cash? true})
                     filtered-contracts)
+        result-growth (fn [{bets :result :keys [error]}]
+                        (if (some? error)
+                            -100
+                            (growth-rate (map #(assoc % :wager (:weight %)) bets))))
         ; TODO: it would be great to find a proper constrained optimizer for differentiable functions
         ;       as-is, we are meta-optimizing our optimizer
-        result (reduce
-                 (fn [best {bets :result :keys [error]}]
-                   (let [growth-rate (if (some? error)
-                                         -100
-                                         (growth-rate (map #(assoc % :wager (:weight %)) bets)))]
-                     (if (> growth-rate (:growth-rate best))
-                       {:growth-rate growth-rate
-                        :bets bets}
-                       best)))
-                 {:growth-rate -1
-                  :error (ex-info "Could not optimize portfolio" {:anomaly :failed-optimization})}
-                 (pmap (fn [_] (-bets-for-contracts contracts)) (range optimizer-runs)))
+        max-result (reduce
+                     (fn [best {bets :result :as opt-result}]
+                       (let [growth-rate (result-growth opt-result)]
+                         (if (> growth-rate (:growth-rate best))
+                           {:growth-rate growth-rate
+                            :bets bets}
+                           best)))
+                     {:growth-rate -1
+                      :error (ex-info "Could not optimize portfolio" {:anomaly :failed-optimization})}
+                     (concat
+                       ; we always want to make sure we try one run starting from our last optimized value
+                       (let [weights (mapv #(get prev-weights-by-contract-id (:contract-id %) 0.0) contracts)]
+                         [(-bets-for-contracts contracts weights)])
+                       (pmap (fn [_] (-bets-for-contracts contracts)) (range optimizer-runs))))
+        fp-result (-bets-for-contracts contracts (mapv :weight (-> max-result :bets)))
+        fp-result-growth (result-growth fp-result)
+        result (if (> fp-result-growth (:growth-rate max-result))
+                   (merge fp-result {:bets (:result fp-result)})
+                   max-result)
         {:keys [bets error]} result]
     (if (some? error)
       (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
@@ -142,17 +151,22 @@
         bets))))
 
 ; memoize since we're doing many runs of an expensive operation
-(def -memoized-get-optimal-bets (memo/lru -get-optimal-bets :lru/threshold 100))
+(def ^:private bet-cache (atom (cache/lru-cache-factory {} :threshold 100)))
 
-(defn get-optimal-bets [hurdle-return contracts-price-and-prob]
-  (let [rounded-contracts (transduce
-                            (comp
-                              (map #(update % :prob round4))
-                              (map #(update % :est-value round4)))
-                            conj
-                            contracts-price-and-prob)
-        result (-memoized-get-optimal-bets hurdle-return rounded-contracts)]
-    (when (nil? result)
-      ; never cache errors
-      (memo/memo-clear! -memoized-get-optimal-bets [hurdle-return contracts-price-and-prob]))
-    result))
+(defn get-optimal-bets
+  ([hurdle-return contracts-price-and-prob]
+    (get-optimal-bets hurdle-return contracts-price-and-prob nil))
+  ([hurdle-return contracts-price-and-prob prev-weights-by-contract-id]
+    (let [rounded-contracts (transduce
+                              (comp
+                                (map #(update % :prob round4))
+                                (map #(update % :est-value round4)))
+                              conj
+                              contracts-price-and-prob)
+          k [hurdle-return rounded-contracts]
+          bet-cache' (cache/through #(-get-optimal-bets (first %) (second %) prev-weights-by-contract-id) @bet-cache k)
+          result (cache/lookup bet-cache' k)]
+      (when (some? result)
+        ; we don't cache errors
+        (reset! bet-cache bet-cache')) ; may drop some cached items if we're running concurrently.  we shouldn't be running concurrently
+      result)))

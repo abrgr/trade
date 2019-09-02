@@ -141,7 +141,7 @@
        (filter #(= (:contract-id %) contract-id))
        first))
 
-(defn trades-for-mkt [hurdle-rate mkt orders-by-contract-id latest-major-input-change cur order-books-by-contract-id prob-by-contract-id]
+(defn trades-for-mkt [hurdle-rate mkt orders-by-contract-id latest-major-input-change cur order-books-by-contract-id prob-by-contract-id prev-weights-by-contract-id]
   (let [time-info (market-time-info (:end-date mkt) latest-major-input-change)
         {:keys [fill-mins]} time-info
         contract-ids-with-order-books (->> order-books-by-contract-id
@@ -168,7 +168,7 @@
                                        (filter some?)
                                        (into []))]
     (if valid?
-      (->> (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob)
+      (->> (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob prev-weights-by-contract-id)
            (mapv
              (fn [{:keys [weight] :as m}]
                ; Divide by 2 to accomodate 2 simultaneous markets on mondays & tuesdays
@@ -181,7 +181,8 @@
                         latest-major-input-change
                         rcp-est
                         order-books
-                        orders]
+                        orders
+                        prev]
   (l/with-log :info "Updating trades"
     (let [cur (:val rcp-est)
           get-mkt (fn [mkt-id]
@@ -189,14 +190,19 @@
                          (filter #(= (:market-id %) mkt-id))
                          first))
           get-trades-for-market (fn [[mkt-id p-by-ctrct]]
-                                  {mkt-id (trades-for-mkt
-                                           hurdle-rate
-                                           (get-mkt mkt-id)
-                                           (get orders mkt-id)
-                                           latest-major-input-change
-                                           cur
-                                           (get order-books mkt-id)
-                                           p-by-ctrct)})]
+                                  (let [prev-weights-by-contract-id (->> (get prev mkt-id)
+                                                                         (group-by :contract-id)
+                                                                         (map (fn [[k v]] [k (-> v first :orig-weight)]))
+                                                                         (into {}))]
+                                    {mkt-id (trades-for-mkt
+                                             hurdle-rate
+                                             (get-mkt mkt-id)
+                                             (get orders mkt-id)
+                                             latest-major-input-change
+                                             cur
+                                             (get order-books mkt-id)
+                                             p-by-ctrct
+                                             prev-weights-by-contract-id)}))]
       (->> prob-dist
            (map get-trades-for-market)
            (apply merge {})))))

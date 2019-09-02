@@ -419,7 +419,8 @@
                                                                     latest-major-input-change]
                                                 :venue-predictit/keys [order-books]
                                                 :executor/keys [outstanding-orders]
-                                                :estimators/keys [approval-rcp]} :partial-state}]
+                                                :estimators/keys [approval-rcp]} :partial-state
+                                              :keys [prev]}]
                                           (strategy-rcp/calculate-trades
                                             (-> cfg :strats :com.adamgberger.predictit.strategies.approval-rating-rcp/id :hurdle-rate)
                                             tradable-mkts
@@ -427,7 +428,8 @@
                                             latest-major-input-change
                                             approval-rcp
                                             order-books
-                                            outstanding-orders))
+                                            outstanding-orders
+                                            prev))
                        :param-keypaths [:cfg
                                         :strategy-rcp/tradable-mkts
                                         :strategy-rcp/prob-dist
