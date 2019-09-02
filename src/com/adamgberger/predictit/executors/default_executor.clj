@@ -93,9 +93,26 @@
                                                            :same-side (= (-> :trade-type order side-for-trade-type)
                                                                          (-> :trade-type desired-pos side-for-trade-type))}))
 (defmethod should-keep-order? {:order-action :buy :same-side true}
-  [{:keys [cur-qty total-buy-qty]} {desired-qty :qty desired-price :price} {:keys [price]}]
-  (and (>= desired-qty (+ cur-qty total-buy-qty)) ; TODO: this doesn't account for wanting an extra 20 but having 2 orders in for 15; both would be canceled
-       (< (Math/abs (double (- price desired-price))) 0.03)))
+  [{:keys [cur-qty total-buy-qty orders]} {desired-qty :qty desired-price :price} {:keys [price order-id]}]
+  (let [total-qty (+ cur-qty total-buy-qty)
+        qty-to-cancel (max 0 (- total-qty desired-qty))]
+    (let [ords-to-cancel (->> orders
+                              (filter #(= (-> % :trade-type action-for-trade-type) :buy))
+                              (sort-by :created-at)
+                              reverse
+                              (reduce
+                                (fn [{:keys [remaining-to-cancel to-cancel] :as acc} {:keys [qty price] :as ord}]
+                                  (if (or (> remaining-to-cancel 0) ; TODO: could be smarter at bin packing
+                                          (> (Math/abs (double (- price desired-price))) 0.03))
+                                      {:remaining-to-cancel (- remaining-to-cancel qty)
+                                       :to-cancel (conj to-cancel ord)}
+                                      acc))
+                                {:remaining-to-cancel qty-to-cancel
+                                 :to-cancel []})
+                              :to-cancel
+                              (map :order-id)
+                              (into #{}))]
+      (-> order-id ords-to-cancel not))))
 (defmethod should-keep-order? {:order-action :buy :same-side false}
   [_ _ _]
   false)
@@ -148,7 +165,7 @@
                                    (map :qty)
                                    (reduce + 0))
                 ords-by-should-keep (->> orders
-                                         (group-by (partial should-keep-order? {:cur-qty cur-qty :total-buy-qty total-buy-qty} pos)))
+                                         (group-by (partial should-keep-order? {:cur-qty cur-qty :total-buy-qty total-buy-qty :orders orders} pos)))
                 old-ords-to-cancel (get ords-by-should-keep false)
                 still-active-old-ords (get ords-by-should-keep true)
                 our-side-buy-ords (->> still-active-old-ords
@@ -200,6 +217,7 @@
                                           :contract-id contract-id
                                           :target-price target-price
                                           :order-id (:order-id ord)
+                                          :order-to-cancel ord
                                           :reason :outdated-order})
                                        old-ords-to-cancel)
                 order-sell-old-pos (when (and (>= desired-qty 0)
@@ -230,8 +248,8 @@
                                    :cancel
                                    :trade)))
 (defmethod submit-for-execution :cancel
-  [venue {:keys [mkt-id contract-id order-id price qty]} send-result]
-  (l/log :info "Cancelling order" {:mkt-id mkt-id :order-id order-id :contract-id contract-id})
+  [venue {:keys [mkt-id contract-id order-id price qty] :as order} send-result]
+  (l/log :info "Cancelling order" order)
   (v/cancel-order
     venue
     mkt-id
@@ -246,8 +264,8 @@
                       :qty qty
                       :price price}})))))
 (defmethod submit-for-execution :trade
-  [venue {:keys [mkt-id contract-id trade-type qty price]} send-result]
-  (l/log :info "Submitting order" {:mkt-id mkt-id :contract-id contract-id :trade-type trade-type :qty qty :price price})
+  [venue {:keys [mkt-id contract-id trade-type qty price] :as order} send-result]
+  (l/log :info "Submitting order" order)
   (v/submit-order
     venue
     mkt-id
