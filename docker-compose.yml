@@ -5,7 +5,9 @@ networks:
 
 services:
   lein:
-    image: clojure:lein-2.8.3-alpine
+    image: trade:LATEST
+    build:
+      context: .
     volumes:
       - ".:/usr/src/app"
       - "./.m2:/root/.m2"

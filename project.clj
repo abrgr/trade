@@ -18,4 +18,7 @@
             [lein-cljfmt "0.6.4"]]
   :main ^:skip-aot com.adamgberger.predictit.main
   :target-path "target/%s"
+  :resource-paths ["/scratch/Ipopt-3.12.13/build/Ipopt/contrib/JavaInterface"
+                   "/scratch/jom/jom-0.4.0.jar"
+                   "/scratch/jom/parallelcolt-0.9.4.jar"]
   :profiles {:uberjar {:aot :all}})

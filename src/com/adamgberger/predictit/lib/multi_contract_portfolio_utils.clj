@@ -4,7 +4,8 @@
             [com.adamgberger.predictit.lib.log :as l])
   (:import (de.xypron.jcobyla Calcfc
                               Cobyla
-                              CobylaExitStatus))
+                              CobylaExitStatus)
+           (com.jom OptimizationProblem))
   (:gen-class))
 
 (def ^:private optimizer-runs 1000)
@@ -57,10 +58,82 @@
 (def ^:private round2 (partial round 2))
 (def ^:private round4 (partial round 4))
 
-(defn- -bets-for-contracts
+(defn- winner-matrix [contracts]
+  (let [num-events (count contracts)
+        num-bets (inc (* 2 num-events))
+        M (make-array Double/TYPE num-events num-bets)]
+    (doseq [event (range num-events)]
+      (aset M event 0 1) ; cash
+      (aset M event (inc event) 1) ; yes bet on event is a winner
+      (doseq [no (range num-events)
+              :when (not= no event)]
+        (aset M event (+ num-events no 1) 1))) ; other nos win
+      M))
+
+(defn- prob-vector [contracts]
+  (double-array (concat (map :prob contracts) (map #(- 1 (:prob %)) contracts))))
+
+(defn- odds-matrix [contracts]
+  (let [num-events (count contracts)
+        num-bets (inc (* 2 num-events))
+        o (make-array Double/TYPE num-events num-bets)]
+    (doseq [event (range num-events)
+            :let [{:keys [price]} (get contracts event)]]
+      (aset o event 0 1) ; cash returns 1x
+      (aset o event (inc event) (/ 1 price)) ; yes bet on event wins 1/price
+      (doseq [no (range num-events)
+              :when (not= no event)]
+        (aset o no (+ num-events event 1) (/ 1 (- 1 price))))) ; no bet on event wins 1/(1-price)
+    o))
+
+(defn- objective-fn [contracts]
+  (let [num-events (count contracts)
+        num-bets (inc (* 2 num-events))]
+    (->> contracts
+         (map-indexed
+           (fn [i {:keys [prob]}]
+             ["p(" i ") * ln("
+              (->> num-bets
+                   range
+                   (map
+                     (fn [j] (str "M(" i ", " j ") * x(" j ") * o(" i ", " j ")")))
+                   (interpose " + "))
+              ")"]))
+         (interpose " + ")
+         flatten
+         (apply str))))
+
+(defn- constraints [contracts]
+  (let [vars (->> contracts count (* 2) inc range (map #(str "x(" % ")")))]
+    (->> vars
+         (mapcat
+           #(vector
+              (str % " >= 0.0001")
+              (str % " <= 1.0000")))
+         (concat
+           [(apply str (concat (->> vars (interpose " + ")) [" == 1"]))]))))
+
+(defn -bets-for-contracts
   ([contracts]
     (-bets-for-contracts contracts (for [_ contracts] (rand))))
   ([contracts weight-seq]
+    (let [op (OptimizationProblem.)]
+      (.setInputParameter op "M" (DoubleMatrixND. (winner-matrix contracts)))
+      (.setInputParameter op "p" (DoubleMatrixND. (prob-vector contracts) "row"))
+      (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix contracts)))
+      (.addDecisionVariable op "x" false (int-array 1 [(-> contracts count (* 2) inc)]) 0.0 1.0)
+      (.setObjectiveFunction op "maximize" (objective-fn contracts))
+      (doseq [c (constraints contracts)]
+        (.addConstraint op c))
+      (.solve op "ipopt" (into-array ["solverLibraryName" "ipopt"]))
+      (.solutionIsOptimal op)
+      (let [x (.getPrimalSolution op "x")])
+      op)
+      ; TODO: right now, "no" contracts are passed in with :prob and :price set to the no values, need to fix this in prob-vector and odds-matrix
+      ; TODO: odds should be set taking commission into account.  not 1 / price but something like (1 - (0.1 * (1-price)))/price
+      ; TODO: convert back to expected output 
+    ))
+
     (let [len (count contracts)
           weights (double-array len weight-seq)
           ; constraints are represented as functions that must be non-negative
