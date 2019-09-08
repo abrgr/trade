@@ -159,7 +159,7 @@
           (.get 0)
           Math/exp))))
 
-(defn -bets-for-contracts [contracts prev-contracts]
+(defn -bets-for-contracts [hurdle-return contracts prev-contracts]
   (try
     (let [op (OptimizationProblem.)]
       (.setInputParameter op "M" (DoubleMatrixND. (winner-matrix contracts) "dense"))
@@ -182,14 +182,16 @@
             prev-contracts' (->> contracts
                                  (mapv
                                    #(let [c (get prev-by-cid (:contract-id %))]
-                                     (merge % {:weight 0.0} (select-keys c [:price-yes :price-no :weight])))))]
+                                     (merge % {:weight 0.0} (select-keys c [:price :price-yes :price-no :trade-type :weight])))))]
         (if ok
             (let [growth-rate (-> (.getObjectiveFunction op)
                                   (.evaluate (object-array ["x" (.getPrimalSolution op "x")]))
                                   (.get 0)
                                   Math/exp)
                   prev-growth-rate (calc-prev-growth-rate op x-mat prev-contracts)]
-              (if (or (nil? prev-growth-rate) (> growth-rate (+ 0.1 prev-growth-rate))) ; no changes unless we're improving by 10%
+              ; TODO: do we want to ensure that fill-mins is the same in prev and new contracts?
+              (if (or (nil? prev-growth-rate)
+                      (> growth-rate (+ hurdle-return prev-growth-rate))) ; no changes unless we're improving by hurdle-return
                 {:bets (->> contracts
                             (map-indexed
                               (fn [i contract]
@@ -221,7 +223,7 @@
   ([hurdle-return contracts prev-contracts]
     (-get-optimal-bets hurdle-return contracts prev-contracts false))
   ([hurdle-return contracts prev-contracts is-retry]
-    (let [{:keys [bets growth-rate prev-growth-rate error]} (-bets-for-contracts contracts prev-contracts)]
+    (let [{:keys [bets growth-rate prev-growth-rate error]} (-bets-for-contracts hurdle-return contracts prev-contracts)]
       (if (some? error)
         (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
                                                           :opt-result error
