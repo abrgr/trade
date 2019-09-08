@@ -2,10 +2,7 @@
   (:require [clojure.core.cache :as cache]
             [com.adamgberger.predictit.lib.utils :as u]
             [com.adamgberger.predictit.lib.log :as l])
-  (:import (de.xypron.jcobyla Calcfc
-                              Cobyla
-                              CobylaExitStatus)
-           (com.jom OptimizationProblem))
+  (:import (com.jom OptimizationProblem DoubleMatrixND))
   (:gen-class))
 
 (def ^:private optimizer-runs 1000)
@@ -71,19 +68,24 @@
       M))
 
 (defn- prob-vector [contracts]
-  (double-array (concat (map :prob contracts) (map #(- 1 (:prob %)) contracts))))
+  (double-array (map :prob-yes contracts)))
+
+(defn- odds-with-commission [price]
+  (let [commission-rate 0.1
+        gross-win (- 1.0 price)]
+    (/ (- 1.0 (* commission-rate gross-win)) price)))
 
 (defn- odds-matrix [contracts]
   (let [num-events (count contracts)
         num-bets (inc (* 2 num-events))
         o (make-array Double/TYPE num-events num-bets)]
     (doseq [event (range num-events)
-            :let [{:keys [price]} (get contracts event)]]
+            :let [{:keys [price-yes price-no]} (get contracts event)]]
       (aset o event 0 1) ; cash returns 1x
-      (aset o event (inc event) (/ 1 price)) ; yes bet on event wins 1/price
+      (aset o event (inc event) (odds-with-commission price-yes))
       (doseq [no (range num-events)
               :when (not= no event)]
-        (aset o no (+ num-events event 1) (/ 1 (- 1 price))))) ; no bet on event wins 1/(1-price)
+        (aset o no (+ num-events event 1) (odds-with-commission price-no))))
     o))
 
 (defn- objective-fn [contracts]
@@ -104,124 +106,78 @@
          (apply str))))
 
 (defn- constraints [contracts]
-  (let [vars (->> contracts count (* 2) inc range (map #(str "x(" % ")")))]
+  (let [var-for-idx #(str "x(" % ")")
+        n-contracts (count contracts)
+        vars (->> n-contracts (* 2) inc range (map var-for-idx))
+        yes-vars (->> n-contracts inc (range 1) (map var-for-idx))
+        no-vars (->> n-contracts (* 2) inc (range (inc n-contracts)) (map var-for-idx))]
     (->> vars
          (mapcat
            #(vector
-              (str % " >= 0.0001")
-              (str % " <= 1.0000")))
+              (str % " >= 0.000001")
+              (str % " <= 1.000000")))
+         ; only positive expectation bets: (map #(str "((prob(i) * o(i)) - 1 - hurdle_rate) * x(i) >= -0.0001") ...)
          (concat
-           [(apply str (concat (->> vars (interpose " + ")) [" == 1"]))]))))
+           [(apply str (concat (->> vars (interpose " + ")) [" == 1"]))]
+           (map
+             #(str %1 " * " %2 " <= 0.0001")
+             yes-vars
+             no-vars)))))
 
-(defn -bets-for-contracts
-  ([contracts]
-    (-bets-for-contracts contracts (for [_ contracts] (rand))))
-  ([contracts weight-seq]
+(defn -bets-for-contracts [contracts]
+  (try
     (let [op (OptimizationProblem.)]
-      (.setInputParameter op "M" (DoubleMatrixND. (winner-matrix contracts)))
+      (.setInputParameter op "M" (DoubleMatrixND. (winner-matrix contracts) "dense"))
       (.setInputParameter op "p" (DoubleMatrixND. (prob-vector contracts) "row"))
-      (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix contracts)))
-      (.addDecisionVariable op "x" false (int-array 1 [(-> contracts count (* 2) inc)]) 0.0 1.0)
+      (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix contracts) "dense"))
+      (.addDecisionVariable op "x" false (int-array 1 [(-> contracts count (* 2) inc)]) 0.000001 1.0)
       (.setObjectiveFunction op "maximize" (objective-fn contracts))
       (doseq [c (constraints contracts)]
         (.addConstraint op c))
       (.solve op "ipopt" (into-array ["solverLibraryName" "ipopt"]))
-      (.solutionIsOptimal op)
-      (let [x (.getPrimalSolution op "x")])
-      op)
-      ; TODO: right now, "no" contracts are passed in with :prob and :price set to the no values, need to fix this in prob-vector and odds-matrix
-      ; TODO: odds should be set taking commission into account.  not 1 / price but something like (1 - (0.1 * (1-price)))/price
-      ; TODO: convert back to expected output 
-    ))
+      (let [n-contracts (count contracts)
+            x-mat (.getPrimalSolution op "x")
+            is-optimal (.solutionIsOptimal op)
+            is-feasible (.solutionIsFeasible op)
+            ok (and is-optimal is-feasible)]
+        (if ok
+            {:bets (->> contracts
+                        (map-indexed
+                          (fn [i contract]
+                            (let [yes-weight (.get x-mat (inc i))
+                                  no-weight (.get x-mat (+ n-contracts 1 i))
+                                  is-yes (> yes-weight no-weight)]
+                              (merge
+                                contract
+                                {:prob (if is-yes (:prob-yes contract) (- 1 (:prob-yes contract)))
+                                 :est-value (if is-yes (:est-value-yes contract) (:est-value-no contract))
+                                 :trade-type (if is-yes :buy-yes :buy-no)
+                                 :price (if is-yes (:price-yes contract) (:price-no contract))
+                                 :weight (-> (if is-yes yes-weight no-weight)
+                                             bigdec
+                                             (.setScale 2 java.math.RoundingMode/DOWN)
+                                             (double))})))))
+             :growth-rate (-> (.getObjectiveFunction op)
+                              (.evaluate (object-array ["x" (.getPrimalSolution op "x")]))
+                              (.get 0)
+                              Math/exp)}
+            {:error (ex-info "Bad optimization solution" {:optimal? is-optimal :feasible? is-feasible :contracts contracts})})))
+    (catch Exception e
+      {:error e})))
 
-    (let [len (count contracts)
-          weights (double-array len weight-seq)
-          ; constraints are represented as functions that must be non-negative
-          non-neg-constraints (mapv
-                               (fn [^Integer i]
-                                 (fn [^doubles x ^doubles con]
-                                   (aset-double con (inc i) (nth x i)))) ; (inc i) because budget constraint is 0th constraint
-                               (range len))
-          budget-constraint (fn [^doubles x ^doubles con]
-                              (aset-double
-                               con
-                               0
-                               (- 1 (reduce (fn [^Double sum ^Double val] (+ sum (Math/abs val))) 0.0 x))))
-          constraints (conj non-neg-constraints budget-constraint)
-          num-constraints (count constraints)
-          f (reify Calcfc
-              (compute [this n m x con]
-                (doseq [constraint constraints] (constraint x con)) ; constraints mutate values of con
-                (* -1 (growth-rate (mapv #(assoc %1 :wager %2) contracts x)))))
-          rho-start 0.25
-          rho-end 1.0e-3
-          res (Cobyla/findMinimum f len num-constraints weights rho-start rho-end 0 1e8)]
-      (if (= CobylaExitStatus/NORMAL res)
-        (let [with-weights (transduce
-                             (comp
-                               (map-indexed #(assoc (get contracts %1) :weight (round2 (max 0 %2)))) ; need the max here to get rid of double artifacts that break our non-neg constraint
-                               (filter (comp not :cash?)))
-                             conj
-                             weights)]
-          {:result with-weights})
-        {:error res}))))
-
-(defn- -get-optimal-bets [hurdle-return contracts-price-and-prob prev-weights-by-contract-id]
-  (let [filtered-contracts (transduce
-                             (comp
-                                (filter #(> (exp-return %) hurdle-return))
-                                (map
-                                  #(u/map-xform
-                                     %
-                                     {:prob round2
-                                      :est-value round2
-                                      :price (comp bigdec round2)})))
-                             conj
-                             contracts-price-and-prob)
-        total-prob (->> filtered-contracts
-                        (map :prob)
-                        (reduce + 0.0))
-        remaining-prob (- 1 total-prob)
-        contracts (if (> remaining-prob 0.0)
-                    (conj filtered-contracts {:prob remaining-prob :cash? true})
-                    filtered-contracts)
-        result-growth (fn [{bets :result :keys [error]}]
-                        (if (some? error)
-                            -100
-                            (growth-rate (map #(assoc % :wager (:weight %)) bets))))
-        ; TODO: it would be great to find a proper constrained optimizer for differentiable functions
-        ;       as-is, we are meta-optimizing our optimizer
-        max-result (reduce
-                     (fn [best {bets :result :as opt-result}]
-                       (let [growth-rate (result-growth opt-result)]
-                         (if (> growth-rate (:growth-rate best))
-                           {:growth-rate growth-rate
-                            :bets bets}
-                           best)))
-                     {:growth-rate -1
-                      :error (ex-info "Could not optimize portfolio" {:anomaly :failed-optimization})}
-                     (concat
-                       ; we always want to make sure we try one run starting from our last optimized value
-                       (let [weights (mapv #(get prev-weights-by-contract-id (:contract-id %) 0.0) contracts)]
-                         [(-bets-for-contracts contracts weights)])
-                       (pmap (fn [_] (-bets-for-contracts contracts)) (range optimizer-runs))))
-        fp-result (-bets-for-contracts contracts (mapv :weight (-> max-result :bets)))
-        fp-result-growth (result-growth fp-result)
-        result (if (> fp-result-growth (:growth-rate max-result))
-                   (merge fp-result {:bets (:result fp-result)})
-                   max-result)
-        {:keys [bets error]} result]
+(defn- -get-optimal-bets [hurdle-return contracts prev-weights-by-contract-id]
+  (let [{:keys [bets growth-rate error]} (-bets-for-contracts contracts)]
     (if (some? error)
       (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
-                                                        :orig-contracts contracts-price-and-prob
                                                         :opt-result error})
           nil)
       (do
         (l/log :info "Optimized portfolio" {:contracts contracts
-                                            :orig-contracts contracts-price-and-prob
                                             :result bets
-                                            :opt-result CobylaExitStatus/NORMAL})
-        bets))))
+                                            :growth-rate growth-rate})
+        (filterv
+          #(> (:weight %) 0.01)
+          bets)))))
 
 ; memoize since we're doing many runs of an expensive operation
 (def ^:private bet-cache (atom (cache/lru-cache-factory {} :threshold 100)))
@@ -232,8 +188,11 @@
   ([hurdle-return contracts-price-and-prob prev-weights-by-contract-id]
     (let [rounded-contracts (transduce
                               (comp
-                                (map #(update % :prob round4))
-                                (map #(update % :est-value round4)))
+                                (map #(update % :prob-yes (comp round4 (partial max 0.0001))))
+                                (map #(update % :est-value-yes (comp round4 (partial max 0.0001))))
+                                (map #(update % :est-value-no (comp round4 (partial max 0.0001))))
+                                (map #(update % :price-yes (comp round2 (partial max 0.01))))
+                                (map #(update % :price-no (comp round2 (partial max 0.01)))))
                               conj
                               contracts-price-and-prob)
           k [hurdle-return rounded-contracts]
