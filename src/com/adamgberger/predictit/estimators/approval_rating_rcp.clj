@@ -26,7 +26,7 @@
           adj-mean (* mean pct-left)
           adj-std (* std pct-left)]
       (if (= 0 remaining-count)
-        (org.apache.commons.math3.distribution.NormalDistribution. 0 0.05) ; TODO: this isn't quite right - poisson of whether rcp actually updates + possibility of unknown surveys; at least this is better than constant dist
+        (org.apache.commons.math3.distribution.NormalDistribution. 0.0 0.05) ; TODO: this isn't quite right - poisson of whether rcp actually updates + possibility of unknown surveys; at least this is better than constant dist
         (org.apache.commons.math3.distribution.NormalDistribution. (+ est adj-mean) adj-std)))
     nil))
 
