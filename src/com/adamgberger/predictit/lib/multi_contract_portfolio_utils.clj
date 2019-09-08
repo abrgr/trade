@@ -238,14 +238,15 @@
                          contracts)
                 prev-contracts
                 true)))
-        (do
+        (let [filtered-bets (filterv
+                              #(> (:weight %) 0.01)
+                              bets)]
           (l/log :info "Optimized portfolio" {:contracts contracts
-                                              :result bets
+                                              :bets bets
+                                              :filtered-bets filtered-bets
                                               :growth-rate growth-rate
                                               :prev-growth-rate prev-growth-rate})
-          (filterv
-            #(> (:weight %) 0.01)
-            bets))))))
+          filtered-bets)))))
 
 ; memoize since we're doing many runs of an expensive operation
 (def ^:private bet-cache (atom (cache/lru-cache-factory {} :threshold 100)))
@@ -266,7 +267,7 @@
           k [hurdle-return rounded-contracts]
           bet-cache' (cache/through #(-get-optimal-bets (first %) (second %) prev-contracts) @bet-cache k)
           result (cache/lookup bet-cache' k)]
-      (comment (when (some? result)
+      (when (some? result)
         ; we don't cache errors
-        (reset! bet-cache bet-cache'))) ; may drop some cached items if we're running concurrently.  we shouldn't be running concurrently
+        (reset! bet-cache bet-cache')) ; may drop some cached items if we're running concurrently.  we shouldn't be running concurrently
       result)))
