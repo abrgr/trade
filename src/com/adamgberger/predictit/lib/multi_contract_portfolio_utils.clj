@@ -2,49 +2,20 @@
   (:require [clojure.core.cache :as cache]
             [com.adamgberger.predictit.lib.utils :as u]
             [com.adamgberger.predictit.lib.log :as l])
-  (:import (com.jom OptimizationProblem DoubleMatrixND))
+  (:import (com.jom OptimizationProblem DoubleMatrixND JOMException)
+           (com.sun.jna Native Callback Callback$UncaughtExceptionHandler))
   (:gen-class))
 
-(def ^:private optimizer-runs 1000)
-
-(defn- odds [pos result]
-  (let [{:keys [price trade-type cash?]} pos
-        price (when (some? price) (double price))
-        result-yes? (= result :yes)
-        bet-yes? (= trade-type :buy-yes)
-        correct-bet? (= result-yes? bet-yes?)]
-    (cond
-      cash? 0
-      correct-bet? (/ 1 price)
-      :else -1)))
-
-(defn- wager-result [pos result]
-  (let [{:keys [^Double wager]} pos
-        b (odds pos result)]
-    (* b (Math/abs wager))))
-
-(defn- growth-for-yes-pos [contract-positions pos]
-  (let [g (reduce
-           (fn [sum this-pos]
-             (let [side (if (= this-pos pos) :yes :no)
-                   res (wager-result this-pos side)]
-               (+ sum res)))
-           1.0
-           contract-positions)]
-    (Math/log (max g Double/MIN_NORMAL)))) ; the max is here since we may not meet the budget constraint so may be negative
-
-(defn- growth-rate [contract-positions]
-  ; This is adapted from Thorpe's discussion of the Kelly Criterion
-  ; http://www.eecs.harvard.edu/cs286r/courses/fall12/papers/Thorpe_KellyCriterion2007.pdf
-  (reduce
-   (fn [sum {:keys [prob] :as pos}]
-     (let [exp-growth (* prob (growth-for-yes-pos contract-positions pos))]
-       (+ sum exp-growth)))
-   0.0
-   contract-positions))
-
-(defn- exp-return [{:keys [est-value price]}]
-  (/ (- est-value price) price))
+; TODO: figure out how to stop ipopt from evaluating our objective function in the infeasible region
+;       our variable bounds *nearly* rule this out
+;       what is the behavior?  do we return an uninitialized objective function value or 0?
+(let [default-exception-handler (Native/getCallbackExceptionHandler)]
+  (Native/setCallbackExceptionHandler
+    (reify Callback$UncaughtExceptionHandler
+      (^void uncaughtException [this ^Callback c ^Throwable t]
+        (when-not (and (instance? JOMException t)
+                       (-> t (.getMessage) (.contains "Logarithms of non positive numbers are not defined")))
+          (.uncaughtException default-exception-handler c t))))))
 
 (defn- round [^long s n]
   (-> n
@@ -61,10 +32,10 @@
         M (make-array Double/TYPE num-events num-bets)]
     (doseq [event (range num-events)]
       (aset M event 0 1) ; cash
-      (aset M event (inc event) 1) ; yes bet on event is a winner
-      (doseq [no (range num-events)
-              :when (not= no event)]
-        (aset M event (+ num-events no 1) 1))) ; other nos win
+      (doseq [yes (range num-events)]
+        (aset M event (inc yes) (if (= yes event) 1.0 0.0001))) ; yes bet on event is a winner, other yes's lose
+      (doseq [no (range num-events)]
+        (aset M event (+ num-events no 1) (if (= no event) 0.0001 1)))) ; our no loses, other nos win
       M))
 
 (defn- prob-vector [contracts]
@@ -80,12 +51,16 @@
         num-bets (inc (* 2 num-events))
         o (make-array Double/TYPE num-events num-bets)]
     (doseq [event (range num-events)
-            :let [{:keys [price-yes price-no]} (get contracts event)]]
-      (aset o event 0 1) ; cash returns 1x
-      (aset o event (inc event) (odds-with-commission price-yes))
+            :let [{:keys [price-yes]} (get contracts event)]]
+      ; cash returns 1x
+      (aset o event 0 1)
+      ; our yes returns our odds and all other yes's return 0
+      (doseq [e (range num-events)]
+        (aset o event (inc e) (if (= e event) (odds-with-commission price-yes) 0.0001)))
+      ; our no returns 0 and all no's other than us return their odds
       (doseq [no (range num-events)
-              :when (not= no event)]
-        (aset o no (+ num-events event 1) (odds-with-commission price-no))))
+              :let [{:keys [price-no]} (get contracts no)]]
+        (aset o event (+ num-events no 1) (if (= no event) 0.0001 (odds-with-commission price-no)))))
     o))
 
 (defn- objective-fn [contracts]
@@ -120,64 +95,109 @@
          (concat
            [(apply str (concat (->> vars (interpose " + ")) [" == 1"]))]
            (map
-             #(str %1 " * " %2 " <= 0.0001")
+             #(str %1 " * " %2 " <= 0.01")
              yes-vars
              no-vars)))))
 
-(defn -bets-for-contracts [contracts]
+(defn- calc-prev-growth-rate [op x-mat prev-contracts]
+  (if (nil? prev-contracts)
+    nil
+    (do
+      (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix prev-contracts) "dense"))
+      (.set x-mat 0 (reduce - 1.0 (map :weight prev-contracts)))
+      (doseq [[i c] (map-indexed vector prev-contracts)]
+        (.set x-mat (inc i) (if (-> c :trade-type (= :buy-yes)) (:weight c) 0.0001))
+        (.set x-mat (+ (count prev-contracts) 1 i) (if (-> c :trade-type (= :buy-no)) (:weight c) 0.0001)))
+      (-> (.getObjectiveFunction op)
+          (.evaluate (object-array ["x" x-mat]))
+          (.get 0)
+          Math/exp))))
+
+(defn -bets-for-contracts [contracts prev-contracts]
   (try
     (let [op (OptimizationProblem.)]
       (.setInputParameter op "M" (DoubleMatrixND. (winner-matrix contracts) "dense"))
       (.setInputParameter op "p" (DoubleMatrixND. (prob-vector contracts) "row"))
       (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix contracts) "dense"))
-      (.addDecisionVariable op "x" false (int-array 1 [(-> contracts count (* 2) inc)]) 0.000001 1.0)
+      (.addDecisionVariable op "x" false (int-array 1 [(-> contracts count (* 2) inc)]) 0.0001 1.0)
       (.setObjectiveFunction op "maximize" (objective-fn contracts))
       (doseq [c (constraints contracts)]
         (.addConstraint op c))
-      (.solve op "ipopt" (into-array ["solverLibraryName" "ipopt"]))
+      (.solve op "ipopt" (object-array ["solverLibraryName" "ipopt"]))
       (let [n-contracts (count contracts)
             x-mat (.getPrimalSolution op "x")
             is-optimal (.solutionIsOptimal op)
             is-feasible (.solutionIsFeasible op)
-            ok (and is-optimal is-feasible)]
+            ok (and is-optimal is-feasible)
+            prev-by-cid (->> prev-contracts
+                             (group-by :contract-id)
+                             (map (fn [[k v]] [k (first v)]))
+                             (into {}))
+            prev-contracts' (->> contracts
+                                 (mapv
+                                   #(let [c (get prev-by-cid (:contract-id %))]
+                                     (merge % {:weight 0.0} (select-keys c [:price-yes :price-no :weight])))))]
         (if ok
-            {:bets (->> contracts
-                        (map-indexed
-                          (fn [i contract]
-                            (let [yes-weight (.get x-mat (inc i))
-                                  no-weight (.get x-mat (+ n-contracts 1 i))
-                                  is-yes (> yes-weight no-weight)]
-                              (merge
-                                contract
-                                {:prob (if is-yes (:prob-yes contract) (- 1 (:prob-yes contract)))
-                                 :est-value (if is-yes (:est-value-yes contract) (:est-value-no contract))
-                                 :trade-type (if is-yes :buy-yes :buy-no)
-                                 :price (if is-yes (:price-yes contract) (:price-no contract))
-                                 :weight (-> (if is-yes yes-weight no-weight)
-                                             bigdec
-                                             (.setScale 2 java.math.RoundingMode/DOWN)
-                                             (double))})))))
-             :growth-rate (-> (.getObjectiveFunction op)
-                              (.evaluate (object-array ["x" (.getPrimalSolution op "x")]))
-                              (.get 0)
-                              Math/exp)}
-            {:error (ex-info "Bad optimization solution" {:optimal? is-optimal :feasible? is-feasible :contracts contracts})})))
+            (let [growth-rate (-> (.getObjectiveFunction op)
+                                  (.evaluate (object-array ["x" (.getPrimalSolution op "x")]))
+                                  (.get 0)
+                                  Math/exp)
+                  prev-growth-rate (calc-prev-growth-rate op x-mat prev-contracts)]
+              (if (or (nil? prev-growth-rate) (> growth-rate (+ 0.1 prev-growth-rate))) ; no changes unless we're improving by 10%
+                {:bets (->> contracts
+                            (map-indexed
+                              (fn [i contract]
+                                (let [yes-weight (.get x-mat (inc i))
+                                      no-weight (.get x-mat (+ n-contracts 1 i))
+                                      is-yes (> yes-weight no-weight)]
+                                  (merge
+                                    contract
+                                    {:prob (if is-yes (:prob-yes contract) (- 1 (:prob-yes contract)))
+                                     :est-value (if is-yes (:est-value-yes contract) (:est-value-no contract))
+                                     :trade-type (if is-yes :buy-yes :buy-no)
+                                     :price (if is-yes (:price-yes contract) (:price-no contract))
+                                     :weight (-> (if is-yes yes-weight no-weight)
+                                                 bigdec
+                                                 (.setScale 2 java.math.RoundingMode/DOWN)
+                                                 (double))}))))
+                            (into []))
+                 :growth-rate growth-rate
+                 :prev-growth-rate prev-growth-rate}
+                (do (l/log :info "Keeping prior contracts" {:growth-rate growth-rate :prev-growth-rate prev-growth-rate})
+                    {:bets prev-contracts'
+                     :growth-rate prev-growth-rate
+                     :prev-growth-rate prev-growth-rate})))
+            {:error (ex-info "Bad optimization solution" {:anomaly :bad-optimization :optimal? is-optimal :feasible? is-feasible :contracts contracts})})))
     (catch Exception e
       {:error e})))
 
-(defn- -get-optimal-bets [hurdle-return contracts prev-weights-by-contract-id]
-  (let [{:keys [bets growth-rate error]} (-bets-for-contracts contracts)]
-    (if (some? error)
-      (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
-                                                        :opt-result error})
-          nil)
-      (do
-        (l/log :info "Optimized portfolio" {:contracts contracts
-                                            :result bets
-                                            :growth-rate growth-rate})
-        (filterv
-          #(> (:weight %) 0.01)
-          bets)))))
+(defn- -get-optimal-bets
+  ([hurdle-return contracts prev-contracts]
+    (-get-optimal-bets hurdle-return contracts prev-contracts false))
+  ([hurdle-return contracts prev-contracts is-retry]
+    (let [{:keys [bets growth-rate prev-growth-rate error]} (-bets-for-contracts contracts prev-contracts)]
+      (if (some? error)
+        (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
+                                                          :opt-result error
+                                                          :will-retry (not is-retry)})
+            (when-not is-retry
+              (-get-optimal-bets
+                hurdle-return
+                ; try without well-priced "definitely-no" contracts
+                (filterv #(not (and (< (Math/abs (- (:price-yes %) (:prob-yes %))) 0.02)
+                                    (< (Math/abs (- (:price-no %) (- 1 (:prob-yes %)))) 0.02)
+                                    (< (:prob-yes %) 0.02)))
+                         contracts)
+                prev-contracts
+                true)))
+        (do
+          (l/log :info "Optimized portfolio" {:contracts contracts
+                                              :result bets
+                                              :growth-rate growth-rate
+                                              :prev-growth-rate prev-growth-rate})
+          (filterv
+            #(> (:weight %) 0.01)
+            bets))))))
 
 ; memoize since we're doing many runs of an expensive operation
 (def ^:private bet-cache (atom (cache/lru-cache-factory {} :threshold 100)))
@@ -185,7 +205,7 @@
 (defn get-optimal-bets
   ([hurdle-return contracts-price-and-prob]
     (get-optimal-bets hurdle-return contracts-price-and-prob nil))
-  ([hurdle-return contracts-price-and-prob prev-weights-by-contract-id]
+  ([hurdle-return contracts-price-and-prob prev-contracts]
     (let [rounded-contracts (transduce
                               (comp
                                 (map #(update % :prob-yes (comp round4 (partial max 0.0001))))
@@ -196,9 +216,9 @@
                               conj
                               contracts-price-and-prob)
           k [hurdle-return rounded-contracts]
-          bet-cache' (cache/through #(-get-optimal-bets (first %) (second %) prev-weights-by-contract-id) @bet-cache k)
+          bet-cache' (cache/through #(-get-optimal-bets (first %) (second %) prev-contracts) @bet-cache k)
           result (cache/lookup bet-cache' k)]
-      (when (some? result)
+      (comment (when (some? result)
         ; we don't cache errors
-        (reset! bet-cache bet-cache')) ; may drop some cached items if we're running concurrently.  we shouldn't be running concurrently
+        (reset! bet-cache bet-cache'))) ; may drop some cached items if we're running concurrently.  we shouldn't be running concurrently
       result)))
