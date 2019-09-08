@@ -27,12 +27,21 @@
 (def ^:private round4 (partial round 4))
 
 (defn- all-events [contracts]
-  (map-indexed
-    (fn [idx contract]
-      {:idx idx
-       :contract-idx idx
-       :contract contract})
-    contracts))
+  (let [sum-prob (->> contracts (map :prob-yes) (apply +))
+        extra-prob (- 1.0 sum-prob)
+        std-events (map-indexed
+                     (fn [idx contract]
+                       {:idx idx
+                        :contract-idx idx
+                        :contract contract})
+                     contracts)]
+    (if (> extra-prob 0.0001)
+      (concat
+        std-events
+        [{:idx (count contracts)
+          :contract-idx -1
+          :contract {:prob-yes extra-prob :special :all-lose}}])
+      std-events)))
 
 (defn- cash-contracts [contracts]
   [{:idx 0
@@ -72,9 +81,9 @@
       (doseq [{:keys [idx contract]} cash-bets]
         (aset e-by-c event idx (f event contract :yes :winner)))
       (doseq [{:keys [idx contract-idx contract]} yes-bets]
-        (aset e-by-c event idx (f event contract :yes (if (= contract-idx event) :winner :loser))))
+        (aset e-by-c event idx (f event contract :yes (if (and (= contract-idx event) (not= (:special contract) :all-lose)) :winner :loser))))
       (doseq [{:keys [idx contract-idx contract]} no-bets]
-        (aset e-by-c event idx (f event contract :no (if (= contract-idx event) :loser :winner)))))
+        (aset e-by-c event idx (f event contract :no (if (or (= contract-idx event) (= (:special contract) :all-lose)) :loser :winner)))))
     e-by-c))
 
 (defn- winner-matrix [contracts]
@@ -84,7 +93,7 @@
       (if (= wl :winner) 1.0 0.0001))))
 
 (defn- prob-vector [contracts]
-  (double-array (map :prob-yes contracts)))
+  (double-array (map #(-> % :contract :prob-yes) (all-events contracts))))
 
 (defn- odds-with-commission [price]
   (let [commission-rate 0.1
@@ -156,7 +165,7 @@
       (.setInputParameter op "M" (DoubleMatrixND. (winner-matrix contracts) "dense"))
       (.setInputParameter op "p" (DoubleMatrixND. (prob-vector contracts) "row"))
       (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix contracts) "dense"))
-      (.addDecisionVariable op "x" false (int-array 1 [(-> contracts count (* 2) inc)]) 0.0001 1.0)
+      (.addDecisionVariable op "x" false (int-array 1 [(-> contracts all-contracts count)]) 0.0001 1.0)
       (.setObjectiveFunction op "maximize" (objective-fn contracts))
       (doseq [c (constraints contracts)]
         (.addConstraint op c))
