@@ -9,7 +9,11 @@
   (println (pr-str (async/<! log-chan)))
   (recur))
 
-(def ^:dynamic *skipped-log-levels* #{:trace :debug})
+(def ^:dynamic *skipped-log-levels* #{:debug :trace})
+(def ^:dynamic *replay-triggering-log-levels* #{:warn :error :fatal})
+(def ^:dynamic *lookback-window* 20)
+
+(def ^:private lookback-window (atom '()))
 
 (defn log
   ([level msg]
@@ -17,8 +21,11 @@
   ([level msg extra]
    (let [ts (-> (java.time.Instant/now) str)
          msg (merge {:level level :msg msg} extra {:ts ts})]
+     (swap! lookback-window #(take *lookback-window* (conj % msg)))
      (when-not (*skipped-log-levels* level)
-       (async/>!! log-chan msg)))))
+       (async/>!! log-chan msg)
+       (when (*replay-triggering-log-levels* level)
+         (async/>!! log-chan {:level level :msg "Log replay" :ts ts :replay (into [] @lookback-window)}))))))
 
 (defn ex-log-msg [^Exception ex]
   {:stack (string/join "  <-  " (.getStackTrace ex))
