@@ -116,7 +116,7 @@
 
 (defn- venue-predictit-post-control [keypath cfg control-state result]
   (let [now (java.time.Instant/now)]
-    (when-let [{:keys [anomaly status headers]} (ex-data result)]
+    (let [{:keys [anomaly status headers]} (ex-data result)]
       (cond
         (= anomaly :trading-suspended) {:control-state {:venue-predictit/suspend-until (.plus now 30 java.time.temporal.ChronoUnit/MINUTES)}
                                         :decision :abort
@@ -125,7 +125,12 @@
         (= status 429) {:control-state {:venue-predictit/suspend-until (.plus now (get headers "Retry-After" 60) java.time.temporal.ChronoUnit/SECONDS)}
                         :decision :abort
                         :reason {:anomaly :rate-limited
-                                 :anomaly-at now}}))))
+                                 :anomaly-at now}}
+        
+        (instance? Throwable result) {:decision :abort
+                                      :reason {:anomaly :exception
+                                               :exception result
+                                               :ex-data (ex-data result)}}))))
 
 (defn- venue-predictit-post-control-array [keypath cfg control-state results]
   (let [result (->> results
