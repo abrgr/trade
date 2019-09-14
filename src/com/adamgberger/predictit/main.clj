@@ -447,13 +447,14 @@
                                                 :strategy-rcp/keys [tradable-mkts
                                                                     prob-dist
                                                                     latest-major-input-change]
-                                                :venue-predictit/keys [order-books]
+                                                :venue-predictit/keys [order-books contracts]
                                                 :executor/keys [outstanding-orders]
                                                 :estimators/keys [approval-rcp]} :partial-state
                                               :keys [prev]}]
                                           (strategy-rcp/calculate-trades
                                             (-> cfg :strats :com.adamgberger.predictit.strategies.approval-rating-rcp/id :hurdle-rate)
                                             tradable-mkts
+                                            contracts
                                             prob-dist
                                             latest-major-input-change
                                             approval-rcp
@@ -465,6 +466,7 @@
                                         :strategy-rcp/prob-dist
                                         :strategy-rcp/latest-major-input-change
                                         :venue-predictit/order-books
+                                        :venue-predictit/contracts
                                         :executor/outstanding-orders
                                         :estimators/approval-rcp]
                        :periodicity {:at-least-every-ms once-per-10-seconds

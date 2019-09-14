@@ -103,12 +103,11 @@
    orders))
 
 (defn get-likely-fill
-  ([mins est-value order-book orders mc]
-   (let [{:keys [last-price]} order-book
-         trade-type (determine-trade-type est-value order-book)]
-     (get-likely-fill mins est-value order-book orders mc trade-type)))
-  ([mins est-value order-book orders mc trade-type]
-   (let [{:keys [last-price]} order-book]
+  ([mins est-value contract order-book orders mc]
+   (let [trade-type (determine-trade-type est-value order-book)]
+     (get-likely-fill mins est-value contract order-book orders mc trade-type)))
+  ([mins est-value contract order-book orders mc trade-type]
+   (let [{:keys [last-price]} contract]
      (if (and (some? trade-type) (some? order-book))
        (let [keypath (trade-type keypath-by-trade-type)
              opp-keypath (other-side-keypath keypath)
@@ -128,19 +127,15 @@
              cur-best (or order-book-cur-best
                           (max (* our-side-est-value 0.6) (or last-price 0.01)))
              likely-price (find-price-for-mins immediate-price last-price cur-best mins)
-             usable-price (-> (cond
-                                (#{:buy-yes :sell-yes} trade-type) (max likely-price (* 0.2 our-side-est-value))
-                                (#{:buy-no :sell-no} trade-type) (max likely-price (* 0.2 our-side-est-value))
-                                :else nil)
-                                     ; never pay more than it's worth
-                              (min our-side-est-value 0.99)
-                                     ; must pay at least 0.01 or epsilon less than order-book-cur-best
+             usable-price (-> likely-price
+                              ; must pay at least 0.01 or epsilon less than order-book-cur-best
                               (max (if (and (#{:buy-yes :buy-no} trade-type)
                                             (some? order-book-cur-best))
                                      (- order-book-cur-best 0.1)
                                      0.01))
                               u/to-price)]
-         (l/log :info "Calculated likely fill" {:likely-price likely-price
+         (l/log :info "Calculated likely fill" {:contract-id (:contract-id contract)
+                                                :likely-price likely-price
                                                 :usable-price usable-price
                                                 :mins mins
                                                 :est-value est-value

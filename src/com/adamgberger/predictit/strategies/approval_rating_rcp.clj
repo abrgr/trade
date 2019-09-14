@@ -143,7 +143,7 @@
        (filter #(= (:contract-id %) contract-id))
        first))
 
-(defn trades-for-mkt [hurdle-rate mkt orders-by-contract-id latest-major-input-change cur order-books-by-contract-id prob-by-contract-id prev]
+(defn trades-for-mkt [hurdle-rate mkt contracts orders-by-contract-id latest-major-input-change cur order-books-by-contract-id prob-by-contract-id prev]
   (let [{:keys [fill-mins]} (market-time-info (:end-date mkt) latest-major-input-change)
         contract-ids-with-order-books (->> order-books-by-contract-id
                                            keys
@@ -153,11 +153,11 @@
                           (into #{}))
         valid? (clojure.set/superset? contract-ids-with-order-books contract-ids)
         price-and-prob-for-contract (fn [[contract-id prob]]
-                                      (let [contract (get-contract mkt contract-id)
+                                      (let [contract (get contracts contract-id)
                                             order-book (get order-books-by-contract-id contract-id)
                                             orders (get-in orders-by-contract-id [contract-id :orders])
-                                            likely-fill-yes (execution-utils/get-likely-fill fill-mins prob order-book orders pricing-math-ctx :buy-yes)
-                                            likely-fill-no (execution-utils/get-likely-fill fill-mins prob order-book orders pricing-math-ctx :buy-no)]
+                                            likely-fill-yes (execution-utils/get-likely-fill fill-mins prob contract order-book orders pricing-math-ctx :buy-yes)
+                                            likely-fill-no (execution-utils/get-likely-fill fill-mins prob contract order-book orders pricing-math-ctx :buy-no)]
                                         (when (every? some? [likely-fill-yes likely-fill-no])
                                           {:prob-yes prob
                                            :price-yes (:price likely-fill-yes)
@@ -183,6 +183,7 @@
 
 (defn calculate-trades [hurdle-rate
                         tradable-mkts
+                        contracts
                         prob-dist
                         latest-major-input-change
                         rcp-est
@@ -198,6 +199,7 @@
                                   {mkt-id (trades-for-mkt
                                            hurdle-rate
                                            (get-mkt mkt-id)
+                                           (get contracts mkt-id)
                                            (get orders mkt-id)
                                            latest-major-input-change
                                            cur
