@@ -185,7 +185,7 @@
             prev-contracts' (->> contracts
                                  (mapv
                                    #(let [c (get prev-by-cid (:contract-id %))]
-                                     (merge % {:weight 0.0} (select-keys c [:price :price-yes :price-no :trade-type :weight])))))]
+                                     (merge % {:weight 0.0} (select-keys c [:price :price-yes :price-no :trade-type :weight :est-value :est-value-yes :est-value-no])))))]
         (l/log :info "Solved" {:x-mat (seq x-mat)
                                :is-opt is-optimal
                                :is-feas is-feasible
