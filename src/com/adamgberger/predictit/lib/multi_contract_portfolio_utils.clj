@@ -146,18 +146,19 @@
              no-vars)))))
 
 (defn- calc-prev-growth-rate [op x-mat prev-contracts]
-  (if (nil? prev-contracts)
-    nil
-    (do
-      (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix prev-contracts) "dense"))
-      (.set x-mat 0 (reduce - 1.0 (map :weight prev-contracts)))
-      (doseq [[i c] (map-indexed vector prev-contracts)]
-        (.set x-mat (inc i) (if (-> c :trade-type (= :buy-yes)) (:weight c) 0.0001))
-        (.set x-mat (+ (count prev-contracts) 1 i) (if (-> c :trade-type (= :buy-no)) (:weight c) 0.0001)))
-      (-> (.getObjectiveFunction op)
-          (.evaluate (object-array ["x" x-mat]))
-          (.get 0)
-          Math/exp))))
+  (let [x (.copy x-mat)]
+    (if (nil? prev-contracts)
+      nil
+      (do
+        (.setInputParameter op "o" (DoubleMatrixND. (odds-matrix prev-contracts) "dense"))
+        (.set x 0 (reduce - 1.0 (map :weight prev-contracts)))
+        (doseq [[i c] (map-indexed vector prev-contracts)]
+          (.set x (inc i) (if (-> c :trade-type (= :buy-yes)) (:weight c) 0.0001))
+          (.set x (+ (count prev-contracts) 1 i) (if (-> c :trade-type (= :buy-no)) (:weight c) 0.0001)))
+        (-> (.getObjectiveFunction op)
+            (.evaluate (object-array ["x" x]))
+            (.get 0)
+            Math/exp)))))
 
 (defn -bets-for-contracts [hurdle-return contracts prev-contracts]
   (try
@@ -171,7 +172,9 @@
         (.addConstraint op c))
       (.solve op "ipopt" (object-array ["solverLibraryName" "ipopt"]))
       (let [n-contracts (count contracts)
-            x-mat (.getPrimalSolution op "x")
+            sol (.getPrimalSolution op "x")
+            sol-size (.getNumElements sol)
+            x-mat (double-array sol-size (map #(.get sol %) (range sol-size)))
             is-optimal (.solutionIsOptimal op)
             is-feasible (.solutionIsFeasible op)
             ok (and is-optimal is-feasible)
@@ -183,20 +186,28 @@
                                  (mapv
                                    #(let [c (get prev-by-cid (:contract-id %))]
                                      (merge % {:weight 0.0} (select-keys c [:price :price-yes :price-no :trade-type :weight])))))]
+        (l/log :info "Solved" {:x-mat (seq x-mat)
+                               :is-opt is-optimal
+                               :is-feas is-feasible
+                               :ok ok
+                               :M (->> (.getInputParameter op "M") (.to2DArray) (map seq))
+                               :p (->> (.getInputParameter op "p") (.to1DArray) seq)
+                               :o (->> (.getInputParameter op "o") (.to2DArray) (map seq))
+                               :obj (.toString (.getObjectiveFunction op))})
         (if ok
             (let [growth-rate (-> (.getObjectiveFunction op)
                                   (.evaluate (object-array ["x" (.getPrimalSolution op "x")]))
                                   (.get 0)
                                   Math/exp)
-                  prev-growth-rate (calc-prev-growth-rate op x-mat prev-contracts)]
+                  prev-growth-rate (calc-prev-growth-rate op sol prev-contracts)]
               ; TODO: do we want to ensure that fill-mins is the same in prev and new contracts?
               (if (or (nil? prev-growth-rate)
                       (> growth-rate (+ hurdle-return prev-growth-rate))) ; no changes unless we're improving by hurdle-return
                 {:bets (->> contracts
                             (map-indexed
                               (fn [i contract]
-                                (let [yes-weight (.get x-mat (inc i))
-                                      no-weight (.get x-mat (+ n-contracts 1 i))
+                                (let [yes-weight (aget x-mat (inc i))
+                                      no-weight (aget x-mat (+ n-contracts 1 i))
                                       is-yes (> yes-weight no-weight)]
                                   (merge
                                     contract
@@ -225,19 +236,20 @@
   ([hurdle-return contracts prev-contracts is-retry]
     (let [{:keys [bets growth-rate prev-growth-rate error]} (-bets-for-contracts hurdle-return contracts prev-contracts)]
       (if (some? error)
-        (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
-                                                          :opt-result error
-                                                          :will-retry (not is-retry)})
-            (when-not is-retry
-              (-get-optimal-bets
-                hurdle-return
-                ; try without well-priced "definitely-no" contracts
-                (filterv #(not (and (< (Math/abs (- (:price-yes %) (:prob-yes %))) 0.02)
-                                    (< (Math/abs (- (:price-no %) (- 1 (:prob-yes %)))) 0.02)
-                                    (< (:prob-yes %) 0.02)))
-                         contracts)
-                prev-contracts
-                true)))
+        (if is-retry
+          (do (l/log :error "Failed to optimize portfolio" {:contracts contracts
+                                                            :opt-result error
+                                                            :will-retry (not is-retry)})
+              nil)
+          (-get-optimal-bets
+            hurdle-return
+            ; try without well-priced "definitely-no" contracts
+            (filterv #(not (and (< (Math/abs (- (:price-yes %) (:prob-yes %))) 0.03)
+                                (< (Math/abs (- (:price-no %) (- 1 (:prob-yes %)))) 0.03)
+                                (< (:prob-yes %) 0.03)))
+                     contracts)
+            prev-contracts
+            true))
         (let [filtered-bets (filterv
                               #(> (:weight %) 0.01)
                               bets)]
