@@ -186,20 +186,12 @@
                                  (mapv
                                    #(let [c (get prev-by-cid (:contract-id %))]
                                      (merge % {:weight 0.0} (select-keys c [:price :price-yes :price-no :trade-type :weight :est-value :est-value-yes :est-value-no])))))]
-        (l/log :info "Solved" {:x-mat (seq x-mat)
-                               :is-opt is-optimal
-                               :is-feas is-feasible
-                               :ok ok
-                               :M (->> (.getInputParameter op "M") (.to2DArray) (map seq))
-                               :p (->> (.getInputParameter op "p") (.to1DArray) seq)
-                               :o (->> (.getInputParameter op "o") (.to2DArray) (map seq))
-                               :obj (.toString (.getObjectiveFunction op))})
         (if ok
             (let [growth-rate (-> (.getObjectiveFunction op)
                                   (.evaluate (object-array ["x" (.getPrimalSolution op "x")]))
                                   (.get 0)
                                   Math/exp)
-                  prev-growth-rate (calc-prev-growth-rate op sol prev-contracts)]
+                  prev-growth-rate (calc-prev-growth-rate op sol prev-contracts')]
               ; TODO: do we want to ensure that fill-mins is the same in prev and new contracts?
               (if (or (nil? prev-growth-rate)
                       (> growth-rate (+ hurdle-return prev-growth-rate))) ; no changes unless we're improving by hurdle-return
@@ -222,7 +214,7 @@
                             (into []))
                  :growth-rate growth-rate
                  :prev-growth-rate prev-growth-rate}
-                (do (l/log :info "Keeping prior contracts" {:growth-rate growth-rate :prev-growth-rate prev-growth-rate})
+                (do (l/log :info "Keeping prior contracts" {:growth-rate growth-rate :prev-growth-rate prev-growth-rate :prev-contracts' prev-contracts' :prev-by-cid prev-by-cid})
                     {:bets prev-contracts'
                      :growth-rate prev-growth-rate
                      :prev-growth-rate prev-growth-rate})))

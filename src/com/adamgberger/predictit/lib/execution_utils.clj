@@ -131,7 +131,7 @@
                               ; must pay at least 0.01 or epsilon less than order-book-cur-best
                               (max (if (and (#{:buy-yes :buy-no} trade-type)
                                             (some? order-book-cur-best))
-                                     (- order-book-cur-best 0.1)
+                                     (- order-book-cur-best 0.01)
                                      0.01))
                               u/to-price)]
          (l/log :info "Calculated likely fill" {:contract-id (:contract-id contract)
@@ -142,7 +142,8 @@
                                                 :last-price last-price
                                                 :trade-type trade-type
                                                 :immediate-price immediate-price
-                                                :cur-best cur-best})
+                                                :cur-best cur-best
+                                                :order-book-cur-best order-book-cur-best})
          {:price usable-price
           :est-value our-side-est-value
           :trade-type trade-type})

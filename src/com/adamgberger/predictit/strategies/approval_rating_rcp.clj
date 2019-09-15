@@ -174,7 +174,7 @@
                    (map (fn [c] (assoc c :weight (:orig-weight c))))
                    (into {}))]
     (if valid?
-      (->> (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob prev)
+      (->> (port-opt-utils/get-optimal-bets hurdle-rate contracts-price-and-prob prev')
            (mapv
              (fn [{:keys [weight] :as m}]
                ; Divide by 2 to accomodate 2 simultaneous markets on mondays & tuesdays

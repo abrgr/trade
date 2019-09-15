@@ -498,12 +498,13 @@
                                      :jitter-pct 0.2}}
                      :strategy-rcp/desired-trades
                       {:compute-producer (fn strategy-rcp-desired-trades
-                                             [{{:venue-predictit/keys [order-books pos-by-contract-id]
+                                             [{{:venue-predictit/keys [order-books pos-by-contract-id contracts]
                                                 :executor/keys [outstanding-orders]
                                                 :strategy-rcp/keys [desired-positions]} :partial-state}]
-                                          (exec/generate-desired-trades desired-positions pos-by-contract-id outstanding-orders order-books))
+                                          (exec/generate-desired-trades desired-positions pos-by-contract-id contracts outstanding-orders order-books))
                        :param-keypaths [:strategy-rcp/desired-positions
                                         :venue-predictit/pos-by-contract-id
+                                        :venue-predictit/contracts
                                         :executor/outstanding-orders
                                         :venue-predictit/order-books]}
                      :executor/outstanding-orders

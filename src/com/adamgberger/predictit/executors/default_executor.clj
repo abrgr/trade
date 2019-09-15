@@ -71,11 +71,12 @@
        (filter #(= (:contract-id %) contract-id))
        empty?))
 
-(defn- current-pos-to-sell [order-books-by-contract-id orders-by-contract-id mins {:keys [contract-id current side avg-price-paid]}]
+(defn- current-pos-to-sell [order-books-by-contract-id contracts-by-id orders-by-contract-id mins {:keys [contract-id current side avg-price-paid]}]
   (let [trade-type (sell-trade-type-for-side side)
         {:keys [price]} (exec-utils/get-likely-fill
                          mins
                          avg-price-paid
+                         (get contracts-by-id contract-id)
                          (get order-books-by-contract-id contract-id)
                          (get orders-by-contract-id contract-id)
                          (java.math.MathContext. 2)
@@ -124,7 +125,7 @@
   [_ {desired-price :price} {:keys [price]}]
   (< (Math/abs (double (- price desired-price))) 0.03))
 
-(defn- adjust-desired-pos-for-actuals [order-books mkt-id desired-pos current-pos-by-contract-id outstanding-orders-by-contract-id]
+(defn- adjust-desired-pos-for-actuals [order-books mkt-id desired-pos current-pos-by-contract-id outstanding-orders-by-contract-id contracts-by-id]
   (->> desired-pos
        ; generate sells for any position that we no longer have a desired-pos for
        (concat (->> current-pos-by-contract-id
@@ -134,6 +135,7 @@
                     (map (partial
                           current-pos-to-sell
                           (get order-books mkt-id)
+                          contracts-by-id
                           outstanding-orders-by-contract-id
                           (or (->> desired-pos first :target-mins) 60)))
                     (filter some?)))
@@ -192,6 +194,7 @@
                                  (let [likely-fill (exec-utils/get-likely-fill
                                                     2 ; if we're on the wrong side, just get out
                                                     (- 1 target-price)
+                                                    (get contracts-by-id contract-id)
                                                     (get-in order-books [mkt-id contract-id])
                                                     orders
                                                     (java.math.MathContext. 2))]
@@ -249,7 +252,7 @@
                                    :trade)))
 (defmethod submit-for-execution :cancel
   [venue {:keys [mkt-id contract-id order-id price qty] :as order} send-result]
-  (l/log :info "Cancelling order" order)
+  (l/log :warn "Cancelling order" order)
   (v/cancel-order
     venue
     mkt-id
@@ -265,7 +268,7 @@
                       :price price}})))))
 (defmethod submit-for-execution :trade
   [venue {:keys [mkt-id contract-id trade-type qty price] :as order} send-result]
-  (l/log :info "Submitting order" order)
+  (l/log :warn "Submitting order" order)
   (v/submit-order
     venue
     mkt-id
@@ -336,13 +339,14 @@
 
 (defn generate-desired-trades [desired-pos
                                pos-by-contract-id
+                               contracts
                                orders
                                order-books]
   (->> desired-pos
     (map
       (fn [[mkt-id desired-positions]]
         (let [outstanding-orders-by-contract-id (get-orders-by-contract-id orders mkt-id)]
-          [mkt-id (adjust-desired-pos-for-actuals order-books mkt-id desired-positions pos-by-contract-id outstanding-orders-by-contract-id)])))
+          [mkt-id (adjust-desired-pos-for-actuals order-books mkt-id desired-positions pos-by-contract-id outstanding-orders-by-contract-id (get contracts mkt-id))])))
     (filter some?)
     (into {})))
 
