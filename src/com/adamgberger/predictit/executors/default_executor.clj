@@ -203,7 +203,7 @@
                                     :mkt-id mkt-id
                                     :contract-id contract-id
                                     :target-price (:est-value likely-fill)
-                                    :price (:price likely-fill)
+                                    :price (max (:est-value likely-fill) (:price likely-fill)) ; don't sell below est-value, even on wrong side
                                     :reason :wrong-side}))
                 order-place-buy (when (> remaining-qty 0)
                                   {:trade-type (:trade-type pos)
