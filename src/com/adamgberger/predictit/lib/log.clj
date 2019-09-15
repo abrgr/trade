@@ -11,7 +11,7 @@
 
 (def ^:dynamic *skipped-log-levels* #{:debug :trace})
 (def ^:dynamic *replay-triggering-log-levels* #{:warn :error :fatal})
-(def ^:dynamic *lookback-window* 20)
+(def ^:dynamic *lookback-window* 50)
 
 (def ^:private lookback-window (atom '()))
 
